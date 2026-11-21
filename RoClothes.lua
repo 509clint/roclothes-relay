@@ -11,7 +11,7 @@ Credit to
 - Wynn
 - therealblueone (Animations)
 - community members
-- other contributors   
+- other contributors
 
 
 
@@ -32118,12 +32118,13 @@ function RoClothes(Player)
 
 
 
-		System._avsyncSpliceJson = function(head, bundleEnc, tweakEnc)
+		System._avsyncSpliceJson = function(head, bundleEnc, tweakEnc, poseEnc)
 			if type(bundleEnc) ~= "string" then return nil end
 			local ok, h = pcall(HS.JSONEncode, HS, head)
 			if not ok or type(h) ~= "string" or #h < 3 or h:sub(1, 1) ~= "{" or h:sub(-1) ~= "}" then return nil end
 			local out = h:sub(1, -2) .. ',"bundle":' .. bundleEnc
 			if type(tweakEnc) == "string" then out = out .. ',"tweaks":' .. tweakEnc end
+			if type(poseEnc) == "string" then out = out .. ',"pose":' .. poseEnc end
 			return out .. "}"
 		end
 
@@ -32459,7 +32460,16 @@ function RoClothes(Player)
 					AS.publishErrorAt = (tick and tick()) or os.clock()
 					return
 				end
-				local hash = _hashBundle(bundleEnc .. "|" .. tweakEnc)
+				local _poseTbl, _poseEnc = nil, nil
+				do
+					local ch0 = Player.Character
+					if ch0 then
+						local okP, p = pcall(System._avsyncPoseOf, ch0)
+						if okP and type(p) == "table" then _poseTbl = p end
+					end
+					if _poseTbl then local okE, pe = pcall(HS.JSONEncode, HS, _poseTbl); if okE and type(pe) == "string" then _poseEnc = pe end end
+				end
+				local hash = _hashBundle(bundleEnc .. "|" .. tweakEnc .. "|" .. (_poseEnc or ""))
 				if hash == AS.lastPublishedHash then return end
 
 
@@ -32467,7 +32477,7 @@ function RoClothes(Player)
 				if _W and _W.stopped then return end
 				if _W and _W.mode == "ws" then
 
-					if _W.pub(dehydrated, tweaks, { bundleEnc, tweaks ~= nil and tweakEnc or nil }) then AS.lastPublishedHash = hash; AS.publishError = nil end
+					if _W.pub(dehydrated, tweaks, { bundleEnc, tweaks ~= nil and tweakEnc or nil, _poseEnc }, _poseTbl) then AS.lastPublishedHash = hash; AS.publishError = nil end
 					return
 				elseif _W and (_W.mode == "connecting" or _W.mode == "backoff") then
 					return
@@ -32481,12 +32491,13 @@ function RoClothes(Player)
 					updatedAt     = _syncNowMs(),
 					bundle        = dehydrated,
 					tweaks        = tweaks,
+					pose          = _poseTbl,
 				}
 
 				local body = System._avsyncSpliceJson({
 					placeId = payload.placeId, jobId = payload.jobId, userId = payload.userId, displayName = payload.displayName,
 					scriptVersion = payload.scriptVersion, updatedAt = payload.updatedAt,
-				}, bundleEnc, tweaks ~= nil and tweakEnc or nil)
+				}, bundleEnc, tweaks ~= nil and tweakEnc or nil, _poseEnc)
 				local okBody = body ~= nil
 				if not okBody then okBody, body = pcall(HS.JSONEncode, HS, payload) end
 				if not okBody then
@@ -33029,6 +33040,7 @@ function RoClothes(Player)
 					AS.lastErrorAt = (tick and tick()) or os.clock()
 				else
 					entry.fails = nil
+					if entry.pose and foreign.Character then pcall(System._avsyncPoseApply, foreign.Character, entry.pose) end
 				end
 			end)
 		end
@@ -33176,6 +33188,22 @@ function RoClothes(Player)
 		System._avsyncCloneTick = function()
 			local AS = System.AvatarSync
 			if not (AS and AS.enabled and AS.placeId) then return end
+			do
+				local chW = Player.Character
+				if chW then
+					local okP, ps = pcall(System._avsyncPoseOf, chW)
+					if okP and type(ps) == "table" then
+						local okE, psig = pcall(HS.JSONEncode, HS, ps)
+						if okE and type(psig) == "string" then
+							if AS._lastPoseSig ~= nil and AS._lastPoseSig ~= psig then
+								AS.lastPublishedHash = nil
+								if Function.AvatarSyncPublish then pcall(Function.AvatarSyncPublish) end
+							end
+							AS._lastPoseSig = psig
+						end
+					end
+				end
+			end
 			local share = System._avsyncCloneCfg()
 			AS._clonePub = AS._clonePub or {}
 			if not AS._clonePubInit then
@@ -33666,6 +33694,18 @@ function RoClothes(Player)
 			local _aOk, _aErr = pcall(_syncApplyToPeer, tonumber(e.userId), rehydrated, tonumber(e.updatedAt) or 0, tweaks)
 			local seen = AS.syncedPeers[tonumber(e.userId)]
 			if seen then seen.lastSeenMs = tonumber(nowMs) or os.time()*1000; if _okSig then seen.lookSig = _lookSig end end
+			if type(e.pose) == "table" then
+				local puid = tonumber(e.userId)
+				local okPS, poseSig = pcall(HS.JSONEncode, HS, e.pose)
+				local pent = AS.syncedPeers[puid]
+				if okPS and type(poseSig) == "string" and pent then
+					if pent.poseSig ~= poseSig then
+						pent.poseSig, pent.pose = poseSig, e.pose
+						local okF, fpl = pcall(function() return PS:GetPlayerByUserId(puid) end)
+						if okF and fpl and fpl.Character then pcall(System._avsyncPoseApply, fpl.Character, e.pose) end
+					end
+				end
+			end
 			_lights()
 			if not _aOk then
 				AS.lastError = "applyfn: " .. tostring(_aErr):sub(1, 40)
@@ -33958,7 +33998,7 @@ function RoClothes(Player)
 
 
 
-		System._avsWs.pub = function(bundle, tweaks, pre)
+		System._avsWs.pub = function(bundle, tweaks, pre, poseTbl)
 			local W, AS = System._avsWs, System.AvatarSync
 			local now0 = os.clock()
 			local tok = W.pubTokens(now0)
@@ -33968,8 +34008,8 @@ function RoClothes(Player)
 			W.pubTok, W.pubTokAt = math.max(0, tok - 1), now0
 			W.pubAt = now0
 			local now = _syncNowMs()
-			local msg = pre and System._avsyncSpliceJson({ t = "pub", updatedAt = now }, pre[1], pre[2])
-			local ok, why = W.send(msg or { t = "pub", updatedAt = now, bundle = bundle, tweaks = tweaks })
+			local msg = pre and System._avsyncSpliceJson({ t = "pub", updatedAt = now }, pre[1], pre[2], pre[3])
+			local ok, why = W.send(msg or { t = "pub", updatedAt = now, bundle = bundle, tweaks = tweaks, pose = poseTbl })
 			if not ok then
 				AS.publishError = (why == "too_large") and "look too large to sync" or ("publish " .. tostring(why))
 				AS.publishErrorAt = (tick and tick()) or os.clock()
