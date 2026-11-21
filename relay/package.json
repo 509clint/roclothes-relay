@@ -1,0 +1,13 @@
+{
+  "name": "roclothes-relay",
+  "version": "1.0.0",
+  "description": "Drop-in replacement for krulhub.dev avatar sync (HTTP polling + WebSocket). Works from Roblox executors over plain HTTPS/WSS.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
