@@ -1,9 +1,10 @@
 // RoClothes avatar relay — drop-in replacement for https://krulhub.dev/avatar/*
 // Implements exactly what RoClothes_perchance.lua expects:
-//   POST /avatar/publish  {placeId,jobId,userId,displayName,scriptVersion,updatedAt,bundle,tweaks[,clone]}
-//   GET  /avatar/server?placeId=..&jobId=..&self=..&protocol=2&clones=1[&since=..]
+//   POST /avatar/publish  {placeId,jobId,userId,displayName,scriptVersion,updatedAt,bundle,tweaks[,pose][,clone]}
+//   GET  /avatar/server?placeId=..&jobId=..&self=..&protocol=2&clones=1[&since=..]  (entries carry pose)
 //   POST /avatar/clonepos {placeId,jobId,userId,pos}
-//   WS   /avatar/ws?placeId=..&jobId=..  hello/welcome/pub/peer/clone/cpos/bye
+//   WS   /avatar/ws?placeId=..&jobId=..  hello/welcome/pub/peer/clone/cpos/bye (peer carries pose)
+//   pose = { "Joint|Part": [12 CFrame numbers] } — validated (<=64 joints, finite), stored + forwarded with the avatar.
 //
 // Run: npm install && node server.js   (needs Node 18+, listens on PORT env or 3000)
 // Deploy anywhere Roblox can reach over plain HTTPS/WSS: Render, Fly.io, Railway,
@@ -35,6 +36,20 @@ const rooms = new Map();
 function validPlaceId(p) { return typeof p === "string" || typeof p === "number" ? /^[0-9]{1,20}$/.test(String(p)) : false; }
 function validJobId(j) { return typeof j === "string" && j.length >= 1 && j.length <= 64 && /^[A-Za-z0-9_.\-]+$/.test(j); }
 function validUserId(u) { const n = Number(u); return Number.isSafeInteger(n) && n > 0 && n <= 1e15; }
+// pose = { "JointName|PartName": [12 finite CFrame components], ... } (joint snapshot)
+function poseOk(p) {
+  if (p === null || p === undefined) return true;
+  if (typeof p !== "object" || Array.isArray(p)) return false;
+  const keys = Object.keys(p);
+  if (keys.length > 64) return false;
+  for (const k of keys) {
+    if (typeof k !== "string" || k.length === 0 || k.length > 80) return false;
+    const a = p[k];
+    if (!Array.isArray(a) || a.length !== 12) return false;
+    for (let i = 0; i < 12; i++) { const n = a[i]; if (typeof n !== "number" || !Number.isFinite(n)) return false; }
+  }
+  return true;
+}
 function roomKeyOf(placeId, jobId) {
   if (!validPlaceId(placeId) || !validJobId(String(jobId))) return null;
   const k = String(placeId) + ":" + String(jobId);
@@ -125,6 +140,7 @@ function entriesFor(room, since) {
       displayName: rec.displayName || "",
       bundle: rec.bundle,
       tweaks: rec.tweaks === undefined ? null : rec.tweaks,
+      pose: rec.pose === undefined ? null : rec.pose,
       updatedAt: rec.updatedAt,
     });
     if (out.length >= MAX_USERS_PER_ROOM) break;
@@ -149,6 +165,7 @@ async function handlePublish(req, res) {
   if (!key || !validUserId(m.userId)) return json(res, 400, { ok: false, error: "bad_params" });
   if (m.bundle !== null && m.bundle !== undefined && typeof m.bundle !== "object") return json(res, 400, { ok: false, error: "bad_bundle" });
   if (m.tweaks !== undefined && m.tweaks !== null && typeof m.tweaks !== "object") return json(res, 400, { ok: false, error: "bad_tweaks" });
+  if (!poseOk(m.pose)) return json(res, 400, { ok: false, error: "bad_pose" });
   const updatedAt = Number(m.updatedAt);
   if (!Number.isSafeInteger(updatedAt) || updatedAt <= 0) return json(res, 400, { ok: false, error: "bad_updatedAt" });
 
@@ -176,13 +193,15 @@ async function handlePublish(req, res) {
       else rec.clones.set(slot, { slot, name: String(m.clone.name || "").slice(0, 32), cf: m.clone.cf, pose: m.clone.pose });
       // keep avatar bundle too if provided
       if (m.bundle !== undefined) rec.bundle = m.bundle;
+      if (m.pose !== undefined) rec.pose = m.pose;
       if (m.tweaks !== undefined) rec.tweaks = m.tweaks;
     }
     broadcast(room, JSON.stringify({ t: "clone", ownerId: uid, clone: Object.assign({ slot }, m.clone.remove ? { remove: true } : m.clone) }), null);
   } else {
     rec.bundle = m.bundle;
     rec.tweaks = m.tweaks === undefined ? null : m.tweaks;
-    broadcast(room, JSON.stringify({ t: "peer", peer: { userId: uid, displayName: rec.displayName, bundle: rec.bundle, tweaks: rec.tweaks, updatedAt } }), null);
+    rec.pose = m.pose === undefined ? null : m.pose;
+    broadcast(room, JSON.stringify({ t: "peer", peer: { userId: uid, displayName: rec.displayName, bundle: rec.bundle, tweaks: rec.tweaks, pose: rec.pose, updatedAt } }), null);
   }
   console.log(new Date().toISOString(), "pub", key, "u" + uid);
   return json(res, 200, { ok: true });
@@ -330,14 +349,16 @@ wss.on("connection", (ws, req) => {
     if (m.t === "pub") {
       if (m.bundle !== null && m.bundle !== undefined && typeof m.bundle !== "object") return;
       if (m.tweaks !== undefined && m.tweaks !== null && typeof m.tweaks !== "object") return;
+      if (!poseOk(m.pose)) return;
       const updatedAt = Number(m.updatedAt);
       if (!Number.isSafeInteger(updatedAt) || updatedAt <= 0) return;
       room.seq += 1;
       rec.seq = room.seq;
       rec.bundle = m.bundle;
       rec.tweaks = m.tweaks === undefined ? null : m.tweaks;
+      rec.pose = m.pose === undefined ? null : m.pose;
       rec.updatedAt = updatedAt;
-      broadcast(room, JSON.stringify({ t: "peer", peer: { userId, displayName, bundle: rec.bundle, tweaks: rec.tweaks, updatedAt } }), ws);
+      broadcast(room, JSON.stringify({ t: "peer", peer: { userId, displayName, bundle: rec.bundle, tweaks: rec.tweaks, pose: rec.pose, updatedAt } }), ws);
       console.log(new Date().toISOString(), "pub-ws", roomKey, "u" + userId);
       return;
     }
