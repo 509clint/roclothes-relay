@@ -17298,8 +17298,8 @@ function RoClothes(Player)
 			for _, _h in ipairs(_hosts) do
 				if not _seenH[_h] then
 					_seenH[_h] = true
-					local _okD, _decoded = fetchJson(_h .. "/RoClothesCache/data_2026-11-16.1.json", 1000)
-					if _okD and type(_decoded) == "table" and type(_decoded.Clothes) == "table" and type(_decoded.Bundle) == "table" then
+					local _decoded = fetchJson(_h .. "/RoClothesCache/data_2026-11-16.1.json", 1000)
+					if type(_decoded) == "table" and type(_decoded.Clothes) == "table" and type(_decoded.Bundle) == "table" then
 						return _decoded, _h
 					end
 				end
