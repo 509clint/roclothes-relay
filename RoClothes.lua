@@ -92,7 +92,7 @@ local _RC_VER_DATE = "2026-11-14"
 --     2) RC_SYNC_BASE_DEFAULT below (put a stable relay here one day),
 --     3) old backend (dead, sync stays off).
 -- ============================================================
-local RC_CONTENT_BASE = "https://d454498c.roclothes-content.pages.dev" -- no trailing slash
+local RC_CONTENT_BASE = "https://roclothes-content.pages.dev" -- no trailing slash
 local RC_SYNC_BASE_DEFAULT = "https://roclothes-relay.onrender.com" -- permanent relay; getgenv override wins if set
 local _rcG = (getgenv and getgenv()) or {}
 local _rcGovr = (type(_rcG.RC_SYNC_BASE) == "string" and _rcG.RC_SYNC_BASE:gsub("%s+", "")) or ""
@@ -16117,6 +16117,10 @@ function RoClothes(Player)
 					warn("[RoClothes] Rejecting suspicious manifest path: " .. tostring(entry.p))
 					continue
 				end
+				-- Host dotfiles (.nomedia) are Android-only; skip so CDN dotfile drops never block installs.
+				if entry.p:match("%.nomedia$") or entry.p:match("(^|/)%.") or entry.s == 0 then
+					continue
+				end
 				local localPath = "RClothesContent/" .. entry.p
 				local needs = true
 
@@ -17114,6 +17118,21 @@ function RoClothes(Player)
 	local _RoClothesData
 	do
 		local BASE_URL       = "https://krulhub.dev/roclothes/"
+		-- Your Pages host mirrors your zip (RClothesContent + RoClothesCache). Prefer it; krulhub is dead.
+		pcall(function()
+			if type(RC_CONTENT_BASE) == "string" and RC_CONTENT_BASE ~= "" then
+				BASE_URL = RC_CONTENT_BASE:gsub("/+$", "") .. "/roclothes/"
+			end
+			local _g = (getgenv and getgenv()) or nil
+			if _g then
+				if type(_g.RC_CONTENT_BASE) == "string" and _g.RC_CONTENT_BASE:gsub("%s+", "") ~= "" then
+					BASE_URL = _g.RC_CONTENT_BASE:gsub("%s+", ""):gsub("/+$", "") .. "/roclothes/"
+				end
+				if type(_g.RC_DATA_BASE) == "string" and _g.RC_DATA_BASE:gsub("%s+", "") ~= "" then
+					BASE_URL = _g.RC_DATA_BASE:gsub("%s+", ""):gsub("/+$", "") .. "/"
+				end
+			end
+		end)
 		local MANIFEST_URL   = BASE_URL .. "manifest.json"
 		local CACHE_DIR      = "RoClothesCache"
 		local MANIFEST_CACHE = CACHE_DIR .. "/manifest.json"
@@ -17257,6 +17276,35 @@ function RoClothes(Player)
 				if manifestRaw then pcall(env.writefile, MANIFEST_CACHE, manifestRaw) end
 			end
 			return merged
+		end
+
+		-- Merged bundle from your zip (fresh installs with no cache and no chunks).
+		-- Defined after fetchJson so the upvalue resolves.
+		local function fetchMergedData()
+			local _hosts = {}
+			pcall(function()
+				if type(RC_CONTENT_BASE) == "string" and RC_CONTENT_BASE ~= "" then
+					table.insert(_hosts, RC_CONTENT_BASE:gsub("/+$", ""))
+				end
+			end)
+			pcall(function()
+				local _g = (getgenv and getgenv()) or nil
+				if _g and type(_g.RC_CONTENT_BASE) == "string" and _g.RC_CONTENT_BASE:gsub("%s+", "") ~= "" then
+					table.insert(_hosts, 1, _g.RC_CONTENT_BASE:gsub("%s+", ""):gsub("/+$", ""))
+				end
+			end)
+			table.insert(_hosts, "https://roclothes-content.pages.dev")
+			local _seenH = {}
+			for _, _h in ipairs(_hosts) do
+				if not _seenH[_h] then
+					_seenH[_h] = true
+					local _okD, _decoded = fetchJson(_h .. "/RoClothesCache/data_2026-11-16.1.json", 1000)
+					if _okD and type(_decoded) == "table" and type(_decoded.Clothes) == "table" and type(_decoded.Bundle) == "table" then
+						return _decoded, _h
+					end
+				end
+			end
+			return nil
 		end
 
 
@@ -17433,21 +17481,46 @@ function RoClothes(Player)
 				if System.showOverlay then pcall(System.showOverlay, "dataOffline", { reason = tostring(reason) }) end
 			end
 			if not manifest then
-				_showDataOfflinePopup("manifest fetch failed (timeout or HTTP error)")
-
-				warn("[RoClothes] No cache and manifest fetch failed - popup shown, halting boot")
-				return
+				local _mergedFb = fetchMergedData()
+				if _mergedFb then
+					_RoClothesData = rehydrate(_mergedFb)
+					System.ManifestVersion = "2026-11-16.1"
+					pcall(function()
+						if env.writefile then
+							env.writefile(CACHE_DIR .. "/data_2026-11-16.1.json", HttpService:JSONEncode(_mergedFb))
+						end
+					end)
+					_sweepStaleCaches(CACHE_DIR .. "/data_2026-11-16.1.json")
+				else
+					_showDataOfflinePopup("manifest fetch failed (timeout or HTTP error)")
+					warn("[RoClothes] No cache and manifest fetch failed - popup shown, halting boot")
+					return
+				end
 			end
-			local version  = tostring(manifest.version or "unversioned")
-			local cacheFile = CACHE_DIR .. "/data_" .. version .. ".json"
-			local merged = fetchAndSaveChunks(manifest.chunks or {}, cacheFile, manifestRaw)
-			if not merged then
-				_showDataOfflinePopup("bundle chunks failed mid-download")
-				warn("[RoClothes] Chunk fetch failed on first run - popup shown, halting boot")
-				return
+			if manifest then
+				local version  = tostring(manifest.version or "unversioned")
+				local cacheFile = CACHE_DIR .. "/data_" .. version .. ".json"
+				local merged = fetchAndSaveChunks(manifest.chunks or {}, cacheFile, manifestRaw)
+				if not merged then
+					local _mergedFb2 = fetchMergedData()
+					if _mergedFb2 then
+						version = "2026-11-16.1"
+						cacheFile = CACHE_DIR .. "/data_" .. version .. ".json"
+						pcall(function()
+							if env.writefile then
+								env.writefile(cacheFile, HttpService:JSONEncode(_mergedFb2))
+							end
+						end)
+						merged = _mergedFb2
+					else
+						_showDataOfflinePopup("bundle chunks failed mid-download")
+						warn("[RoClothes] Chunk fetch failed on first run - popup shown, halting boot")
+						return
+					end
+				end
+				System.ManifestVersion = version
+				_RoClothesData = rehydrate(merged)
 			end
-			System.ManifestVersion = version
-			_RoClothesData = rehydrate(merged)
 		end
 	end
 
