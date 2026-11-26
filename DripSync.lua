@@ -2254,13 +2254,13 @@ local _KR = { cornerScale = 1, corners = {}, glass = 0, panels = {}, tgl = {} }
 
 _KR.uis = function(o, floor) pcall(function() o:SetAttribute("rcUIS", floor or 0) end); return o end
 
-_KR.FAMS = { Gotham = "GothamSSm", ["Builder Sans"] = "BuilderSans", Montserrat = "Montserrat", Nunito = "Nunito", Ubuntu = "Ubuntu", Roboto = "Roboto", ["Source Sans"] = "SourceSansPro", Titillium = "TitilliumWeb", Fredoka = "FredokaOne", Michroma = "Michroma" }
+_KR.FAMS = { ["Google Sans"] = "GSANS", Gotham = "GothamSSm", ["Builder Sans"] = "BuilderSans", Montserrat = "Montserrat", Nunito = "Nunito", Ubuntu = "Ubuntu", Roboto = "Roboto", ["Source Sans"] = "SourceSansPro", Titillium = "TitilliumWeb", Fredoka = "FredokaOne", Michroma = "Michroma" }
 _KR.WEIGHT = { [Enum.Font.Gotham] = "Regular", [Enum.Font.GothamMedium] = "Medium", [Enum.Font.GothamBold] = "Bold", [Enum.Font.GothamBlack] = "Heavy",
 	[Enum.Font.BuilderSans] = "Regular", [Enum.Font.BuilderSansMedium] = "Medium", [Enum.Font.BuilderSansBold] = "Bold", [Enum.Font.BuilderSansExtraBold] = "ExtraBold" }
 _KR.applyFam = function(o)
 	local w = o:GetAttribute("rcFW")
 	if not w then w = _KR.WEIGHT[o.Font]; if not w then return end; o:SetAttribute("rcFW", w) end
-	o.FontFace = Font.fromName(_KR.fontFam or "GothamSSm", Enum.FontWeight[w])
+	o.FontFace = _KR.famFace(_KR.fontFam or "GothamSSm", w)
 end
 local function new(class, props)
 	local o = Instance.new(class)
@@ -2326,7 +2326,7 @@ local SET = {
 
 	notify = true, toastPos = "Top-right", toastTime = 100,
 
-	dockMag = true, dockMagAmt = 142, pressFx = true, uiFont = "Gotham",
+	dockMag = true, dockMagAmt = 142, pressFx = true, uiFont = "Google Sans",
 	homeLayout = "Auto",
 
 	mode = "Dark", contrast = "Standard", accentGrad = "Off", accentAnim = "Off", tabColours = "Colourful", tabIntensity = 100,
@@ -2448,6 +2448,54 @@ do
 	SET.theme = "Midnight"
 	SET.accent = Color3.fromRGB(96, 150, 240)
 	SET.panelTint = 40
+	SET.uiFont = "Google Sans"
+	-- DripSync: Google Sans UI font, downloaded once + cached locally, Gotham fallback
+	_KR.GSURL = { R = "https://user.uploads.dev/file/2a6ad360164f1ed539adef55e4f6d613.ttf", M = "https://user.uploads.dev/file/60c6ac0ddd5fe81279a9623a0bcdefd0.ttf", B = "https://user.uploads.dev/file/ad95321075d025c933c332aa197a7f83.ttf" }
+	_KR.gsFace = {}
+	pcall(function()
+		local _ga, _wf = getcustomasset, writefile
+		local _isF = isfile or function() return false end
+		if type(_ga) ~= "function" or type(_wf) ~= "function" then warn("[DripSync] font: no file APIs"); return end
+		pcall(function() if _isF("DripSync-GSans2.font") then pcall(delfile, "DripSync-GSans2.font") end end)
+		local _req = (syn and syn.request) or (http and http.request) or http_request or request
+		local function _dl(_u)
+			if _req then
+				local _ok, _r = pcall(_req, { Url = _u, Method = "GET" })
+				if _ok and _r and (_r.Success or (_r.StatusCode and _r.StatusCode >= 200 and _r.StatusCode < 300)) and _r.Body then return _r.Body end
+			end
+			local _ok, _b = pcall(function() return game:HttpGet(_u) end)
+			if _ok and _b then return _b end
+			return nil
+		end
+		for _, _w in ipairs({ "R", "M", "B" }) do
+			local _p = "DripSync-GSans2-" .. _w .. ".ttf"
+			local _fp = "DripSync-GSans2-" .. _w .. ".font"
+			pcall(function() if _isF(_p) then pcall(delfile, _p) end end)
+			pcall(function() if _isF(_fp) then pcall(delfile, _fp) end end)
+			local _d = _dl(_KR.GSURL[_w])
+			if _d then pcall(function() _wf(_p, _d) end) end
+			if _isF(_p) then
+				local _wn, _ww = ({ R = "Regular", M = "Medium", B = "Bold" })[_w], ({ R = 400, M = 500, B = 700 })[_w]
+				local _okj, _js = pcall(function() return game:GetService("HttpService"):JSONEncode({ name = "DripSyncGSans-" .. _w, faces = {
+					{ name = _wn, weight = _ww, style = "normal", assetId = _ga(_p) },
+				} }) end)
+				if _okj and _js then pcall(function() _wf(_fp, _js) end) end
+				if _isF(_fp) then
+					local _ok, _f = pcall(Font.new, _ga(_fp))
+					if _ok and _f then _KR.gsFace[_w] = _f end
+				end
+			end
+		end
+		warn("[DripSync] font faces R=" .. tostring(_KR.gsFace.R ~= nil) .. " M=" .. tostring(_KR.gsFace.M ~= nil) .. " B=" .. tostring(_KR.gsFace.B ~= nil))
+	end)
+	_KR.famFace = function(fam, w)
+		if fam == "GSANS" then
+			local _f = _KR.gsFace[({ Regular = "R", Medium = "M", Bold = "B", Heavy = "B", ExtraBold = "B", Light = "R", Thin = "R" })[w] or "R"] or _KR.gsFace.R
+			if _f then return _f end
+			fam = "GothamSSm"
+		end
+		return Font.fromName(fam, Enum.FontWeight[w] or Enum.FontWeight.Regular)
+	end
 	_KR.saveGen = 0
 	_KR.saveCfg = function()
 		if not writefile then return end
@@ -8692,7 +8740,7 @@ local function renderPreviewVisual(key, stage)
 			local function t(txt, par, x, y, col, size, bold, right)
 				local l = new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.new(0, x, 0, y), Size = UDim2.new(1, -x - 6, 0, math.ceil(size * ts) + 2), Text = txt, TextColor3 = col, Font = bold and FONTB or FONT, TextXAlignment = right and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left, ZIndex = 14, Parent = par })
 				fixT(l, size * ts)
-				if o.font then l.FontFace = Font.fromName(o.font, bold and Enum.FontWeight.Bold or Enum.FontWeight.Medium) end
+				if o.font then l.FontFace = _KR.famFace(o.font, bold and "Bold" or "Medium") end
 				return l
 			end
 			local function grad(fr) local a2 = (o.flat and p.accent) or p.accent2; new("UIGradient", { Color = ColorSequence.new(a2, p.accent), Parent = fr }); fr.BackgroundColor3 = Color3.new(1, 1, 1) end
@@ -9246,10 +9294,10 @@ local function fillSettings()
 			lbl({ Size = UDim2.new(1, 0, 0, 16), Text = "Font", Font = FONTB, TextColor3 = T.txt2, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = fr })
 			local grid = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 20), Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = fr })
 			new("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 34), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
-			for i, n in ipairs({ "Gotham", "Builder Sans", "Montserrat", "Nunito", "Ubuntu", "Roboto", "Source Sans", "Titillium", "Fredoka", "Michroma" }) do
+			for i, n in ipairs({ "Google Sans", "Gotham", "Builder Sans", "Montserrat", "Nunito", "Ubuntu", "Roboto", "Source Sans", "Titillium", "Fredoka", "Michroma" }) do
 				local on = (SET.uiFont or "Gotham") == n
 				local b = new("TextButton", { AutoButtonColor = false, Text = n, TextSize = 13, TextColor3 = T.txt, BackgroundColor3 = on and T.accentD or T.bg, LayoutOrder = i, Parent = grid }); corner(b, 8); _KR.press(b)
-				b.FontFace = Font.fromName(_KR.FAMS[n], Enum.FontWeight.Medium); b:SetAttribute("rcFW", nil)
+				b.FontFace = _KR.famFace(_KR.FAMS[n], "Medium"); b:SetAttribute("rcFW", nil)
 				b.MouseButton1Click:Connect(function() SET.uiFont = n; A.apply("font"); fillSettings() end)
 			end
 		end
@@ -10673,7 +10721,7 @@ A.reset = function()
 	SET.hiddenTabs = {}; A.applyTabs()
 	SET.notify, SET.toastPos = true, "Top-right"; A.applyToast()
 	SET.toastTime, SET.dockMag, SET.dockMagAmt, SET.pressFx = 100, true, 142, true; _KR.dockMag(nil)
-	if SET.uiFont ~= "Gotham" then SET.uiFont = "Gotham"; A.applyFont() end
+	SET.uiFont = "Google Sans"; A.applyFont()
 	SET.mode, SET.contrast, SET.accentGrad, SET.accentAnim, SET.tabColours, SET.tabIntensity = "Dark", "Standard", "Off", "Off", "Colourful", 100
 	SET.textScale, SET.blurAmt, SET.wallpaper, SET.wallDim, SET.panelTint, SET.shadows, SET.apSub = 100, 50, "", 45, 0, "Off", "Colour"
 	SET.wallOpacity = 100
@@ -12214,6 +12262,8 @@ A.playIntro = function(previewDownload)
 			SET.theme = "Midnight"
 			SET.accent = Color3.fromRGB(96, 150, 240)
 			SET.panelTint = 40
+			SET.uiFont = "Google Sans"
+			pcall(A.applyFont)
 			pcall(A.applyTheme, false)
 			if type(_KR.saveCfg) == "function" then pcall(_KR.saveCfg) end
 		if _KR.cfgLoaded and not _KR.cfgApplied then
@@ -12243,7 +12293,7 @@ A.playIntro = function(previewDownload)
 		end
 		task.delay(0.5, function() pcall(function() _KR.chev.Visible = true end) end)
 
-		task.delay(1.1, function() toast("Welcome to RoClothes:DripSync", "Your SmartBar is ready - tap a tab to start, or your avatar for Home.", "ok") end)
+			task.delay(1.1, function() toast("Welcome to RoClothes:DripSync", "Your SmartBar is ready - tap a tab to start, or your avatar for Home.", "ok") end)
 	end
 
 
