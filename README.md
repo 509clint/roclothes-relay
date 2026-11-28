@@ -1,5 +1,5 @@
 # roclothes-relay
-the server for a roclothes fork. - uselessaccou-nt/joifejigej
+the server for a roclothes fork. - DripSync
 
 script:
 ```lua
