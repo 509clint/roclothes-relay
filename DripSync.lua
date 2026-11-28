@@ -1,16 +1,15 @@
 --[[	
 
-This script is not obfuscated.
-Credit to
-- Clint (@joifejigejnznt on X)
-- Krul
-- Lerp
-- Unknowing
-- Quitamase
+this script is not obfuscated. sharing it is covered by the non-existing terms: https://krulhub.dev/roclothes/terms
+credit to
+- krul
+- lerp
+- unknowing
+- quitamase
 - die2n1ght
-- EC
-- Wynn
-- therealblueone (Animations)
+- ec
+- wynn
+- therealblueone (animations)
 - community members
 - other contributors
 
@@ -84,8 +83,18 @@ pcall(function() MS = game:GetService("MaterialService") end)
 local _RC_VER      = "V4.5.117.1115-blue"
 local _RC_VER_DATE = "2026-11-14"
 
-local RC_CONTENT_BASE = "https://roclothes-content.pages.dev" 
-local RC_SYNC_BASE_DEFAULT = "https://roclothes-relay.onrender.com" 
+-- ============================================================
+-- your hosts (baked in for your copies).
+--   content files live on your cloudflare pages (stable, always on).
+--   avatar sync goes to rc_sync_base. priority, highest first:
+--     1) getgenv().rc_sync_base set before running (friends paste the
+--        current tunnel url there each session, no file edit needed),
+--     2) rc_sync_base_default below (put a stable relay here one day),
+--     3) old backend (dead, sync stays off).
+-- ============================================================
+local RC_CONTENT_BASE = "https://roclothes-content.pages.dev" -- no trailing slash
+local RC_SYNC_BASE_DEFAULT = "https://roclothes-relay.onrender.com" -- permanent relay; getgenv override wins if set
+local _rcG = (getgenv and getgenv()) or {}
 local _rcGovr = (type(_rcG.RC_SYNC_BASE) == "string" and _rcG.RC_SYNC_BASE:gsub("%s+", "")) or ""
 local RC_SYNC_BASE = (_rcGovr ~= "" and _rcGovr) or (RC_SYNC_BASE_DEFAULT ~= "" and RC_SYNC_BASE_DEFAULT) or ""
 RC_SYNC_BASE = RC_SYNC_BASE:gsub("/+$", "")
@@ -2341,6 +2350,7 @@ local SET = {
 	custom = { accent2 = T.accent2, card = T.card, bg = T.bg, text = T.txt },
 
 	catCategory = "All", catSort = "", catPeriod = "AllTime", catCreator = "", catEqOpen = true, catStripOpen = false,
+	sitePostSeen = false,
 }
 _KR.light = function() return SET.mode == "Light" and SET.theme ~= "Custom" end
 _KR.tabCol = function(c)
@@ -2407,11 +2417,11 @@ do
 					elseif k == "custom" and type(v) == "table" then
 						SET.custom = SET.custom or {}
 						for ck, cv in pairs(v) do if type(cv) == "table" then SET.custom[ck] = t2col(cv) end end
-					elseif SET[k] ~= nil and type(SET[k]) == type(v) then SET[k] = v end
+				elseif SET[k] ~= nil and type(SET[k]) == type(v) then SET[k] = v end
 				end
 				if data.locMigrated == nil then SET.hideLocation = true end
 				_KR.cfgLoaded = true
-				-- DripSync blue-theme migration: saved pink/white accent or non-blue theme -> Midnight blue (runs every boot, harmless)
+				-- dripsync blue-theme migration: saved pink/white accent or non-blue theme -> midnight blue (runs every boot, harmless)
 				do
 					local BLUE = Color3.fromRGB(96, 150, 240)
 					local function _bwPink(c)
@@ -2435,12 +2445,12 @@ do
 			end
 		end
 	end
-	-- DripSync: force blue for everyone at load (fresh installs have no save yet)
+	-- dripsync: force blue for everyone at load (fresh installs have no save yet)
 	SET.theme = "Midnight"
 	SET.accent = Color3.fromRGB(96, 150, 240)
 	SET.panelTint = 40
 	SET.uiFont = "Google Sans"
-	-- DripSync: Google Sans UI font, downloaded once + cached locally, Gotham fallback
+	-- dripsync: google sans ui font, downloaded once + cached locally, gotham fallback
 	_KR.GSURL = { R = "https://user.uploads.dev/file/2a6ad360164f1ed539adef55e4f6d613.ttf", M = "https://user.uploads.dev/file/60c6ac0ddd5fe81279a9623a0bcdefd0.ttf", B = "https://user.uploads.dev/file/ad95321075d025c933c332aa197a7f83.ttf" }
 	_KR.gsFace = {}
 	pcall(function()
@@ -2487,6 +2497,7 @@ do
 		end
 		return Font.fromName(fam, Enum.FontWeight[w] or Enum.FontWeight.Regular)
 	end
+
 	_KR.saveGen = 0
 	_KR.saveCfg = function()
 		if not writefile then return end
@@ -8064,6 +8075,27 @@ corner(avatar, 19); local avs = stroke(avatar, T.line, 1)
 if not SET.barAvatar then useKrulIcon(avatar) end
 avatar.MouseEnter:Connect(function() tween(avs, 0.25, { Color = T.accent }); _KR.tipShow(avatar, "Home") end)
 avatar.MouseLeave:Connect(function() tween(avs, 0.25, { Color = T.line }); _KR.tipHide() end)
+-- dripsync: site-launch post + red (1) badge on the brand icon, seen-state saved in settings
+do
+	_KR.sitePost = { title = "Our site is live!", imgUrl = "https://user.uploads.dev/file/fbcff950f148ab754df1c1d2ffebfaa5.png", imgPath = "RClothesContent/images/dripsync-news-post.png" }
+	_KR.markSiteSeen = function()
+		if SET.sitePostSeen then return end
+		SET.sitePostSeen = true
+		if _KR._siteBadge then pcall(function() _KR._siteBadge.Visible = false end) end
+		if _KR.saveCfg then _KR.saveCfg() end
+	end
+	_KR.openSitePost = function()
+		local idx = 1
+		if type(_KR.newsItems) == "table" then
+			for i, it in ipairs(_KR.newsItems) do if type(it) == "table" and it.title == _KR.sitePost.title then idx = i break end end
+		end
+		if _KR.openNews then _KR.openNews(idx) end
+		_KR.markSiteSeen()
+	end
+end
+_KR._siteBadge = new("TextButton", { Name = "SiteBadge", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 4, 0, -4), Size = UDim2.fromOffset(17, 17), BackgroundColor3 = Color3.fromRGB(255, 59, 48), BorderSizePixel = 0, AutoButtonColor = false, Text = "1", Font = FONTB, TextSize = 11, TextColor3 = Color3.new(1, 1, 1), ZIndex = 5, Visible = not SET.sitePostSeen, Parent = avatar })
+corner(_KR._siteBadge, 8)
+_KR._siteBadge.MouseButton1Click:Connect(function() _KR.openSitePost() end)
 
 
 
@@ -8182,6 +8214,24 @@ local function fitHome()
 end
 local A = {}
 _KR.A = A
+-- dripsync: download the site-launch banner once into RClothesContent/images, prime the news image cache
+pcall(function()
+	local sp = _KR.sitePost
+	if type(isfile) ~= "function" or type(writefile) ~= "function" then return end
+	local function isF(p) local ok, r = pcall(isfile, p) return ok and r end
+	if not isF(sp.imgPath) then
+		if type(makefolder) == "function" then pcall(makefolder, "RClothesContent") pcall(makefolder, "RClothesContent/images") end
+		local req = request or http_request or (syn and syn.request) or (http and http.request)
+		if req then
+			local ok, res = pcall(req, { Url = sp.imgUrl, Method = "GET" })
+			if ok and type(res) == "table" and res.Body and #res.Body > 4096 then pcall(writefile, sp.imgPath, res.Body) end
+		end
+	end
+	if isF(sp.imgPath) then
+		A._newsImg = A._newsImg or {}
+		A._newsImg[sp.imgUrl] = { path = sp.imgPath, imW = 1600, imH = 900 }
+	end
+end)
 
 local resetSides, placeSideButtons, goTo
 
@@ -8863,6 +8913,7 @@ local newsPanel, renderNews
 	end
 	local NEWS = {
 
+		{ title = "Our site is live!", date = "Nov 28, 2026", cat = "Update", new = false, image = "https://user.uploads.dev/file/fbcff950f148ab754df1c1d2ffebfaa5.png", link = "https://dripsync.edgeone.dev", linkLabel = "Visit site", body = "Our official site is live! Grab the loadstring, read the how-to and the questions at dripsync.edgeone.dev - free, no key, no account." },
 		{ title = "Loading news...", date = "", cat = "Community", new = false, body = "If this stays here, the news couldn't be reached (your connection or executor may be blocking it). Update notes are always posted in the Discord too: discord.gg/SBUuYsnShf" },
 	}
 	local NEWS_CAT = { Update = Color3.fromRGB(96, 150, 240), Event = Color3.fromRGB(255, 255, 255), Community = Color3.fromRGB(72, 200, 130), Guide = Color3.fromRGB(214, 174, 88) }
@@ -9026,7 +9077,7 @@ local newsPanel, renderNews
 			if filt and it.cat ~= filt then continue end
 			local row = headlineRow(it, i)
 			_KR._newsRows[i] = { row = row, it = it }
-			row.MouseButton1Click:Connect(function() selectRow(row, it, i) end)
+			row.MouseButton1Click:Connect(function() if it.title == _KR.sitePost.title then _KR.markSiteSeen() end; selectRow(row, it, i) end)
 			row.MouseEnter:Connect(function() if _selRow ~= row then tween(row, 0.12, { BackgroundTransparency = row:GetAttribute("rcHovT") or 0.55 }) end end)
 			row.MouseLeave:Connect(function() if _selRow ~= row then tween(row, 0.12, { BackgroundTransparency = row:GetAttribute("rcOffT") or 1 }) end end)
 			if i == keep then rRef, iRef = row, it end
@@ -12245,7 +12296,7 @@ A.playIntro = function(previewDownload)
 	pcall(function() local ex = PlayerGui:FindFirstChild("RoClothesIntro"); if ex then ex:Destroy() end end)
 	if MP.introVpConn then pcall(function() MP.introVpConn:Disconnect() end); MP.introVpConn = nil end
 	local function reveal()
-		-- DripSync: force blue theme for everyone (runs every boot, no save needed)
+		-- dripsync: force blue theme for everyone (runs every boot, no save needed)
 			SET.theme = "Midnight"
 			SET.accent = Color3.fromRGB(96, 150, 240)
 			SET.panelTint = 40
@@ -13492,7 +13543,7 @@ function RoClothes(Player)
 			return _g, _id
 		end)
 		if okSetup and _genv and _mySession then
-			_isActiveSession = function() return true end -- OFFLINE: multi-session kill disabled
+			_isActiveSession = function() return true end -- offline: multi-session kill disabled
 		end
 	end
 
@@ -16163,7 +16214,7 @@ function RoClothes(Player)
 					warn("[RoClothes] Rejecting suspicious manifest path: " .. tostring(entry.p))
 					continue
 				end
-				-- Host dotfiles (.nomedia) are Android-only; skip so CDN dotfile drops never block installs.
+				-- host dotfiles (.nomedia) are android-only; skip so cdn dotfile drops never block installs.
 				if entry.p:match("%.nomedia$") or entry.p:match("(^|/)%.") or entry.s == 0 then
 					continue
 				end
@@ -16558,7 +16609,7 @@ function RoClothes(Player)
 
 	System._rcaTok = function() return _RCA and _RCA.tok end
 	System.flag = function(name) return _RCA ~= nil and _RCA.flag(name) end
-	-- OFFLINE: remote kill hooks removed (was: BREAKER.Destroying -> _RCA.stop, onRefuse -> destroy)
+	-- offline: remote kill hooks removed (was: breaker.destroying -> _rca.stop, onrefuse -> destroy)
 
 
 	pcall(function()
@@ -17164,7 +17215,7 @@ function RoClothes(Player)
 	local _RoClothesData
 	do
 		local BASE_URL       = "https://dripsync.local/roclothes/"
-		-- Your Pages host mirrors your zip (RClothesContent + RoClothesCache). Prefer it; the old backend is dead.
+		-- your pages host mirrors your zip (rclothescontent + roclothescache). prefer it; the old backend is dead.
 		pcall(function()
 			if type(RC_CONTENT_BASE) == "string" and RC_CONTENT_BASE ~= "" then
 				BASE_URL = RC_CONTENT_BASE:gsub("/+$", "") .. "/roclothes/"
@@ -17324,8 +17375,8 @@ function RoClothes(Player)
 			return merged
 		end
 
-		-- Merged bundle from your zip (fresh installs with no cache and no chunks).
-		-- Defined after fetchJson so the upvalue resolves.
+		-- merged bundle from your zip (fresh installs with no cache and no chunks).
+		-- defined after fetchjson so the upvalue resolves.
 		local function fetchMergedData()
 			local _hosts = {}
 			pcall(function()
@@ -30235,7 +30286,7 @@ function RoClothes(Player)
 		local completion = {done = false, ok = false}
 		local DataDetail = PlayerData[Data]
 		if not DataDetail then completion.done = true; completion.error = "missing PlayerData"; return completion end
-		-- OFFLINE: access gate removed (was: _RCA.gate check)
+		-- offline: access gate removed (was: _rca.gate check)
 		if DataDetail._loadupPack then
 			local _lp = DataDetail._loadupPack; DataDetail._loadupPack = nil
 			if Data == Player.Name and DataDetail.CurrentBundle == _lp and type(Bundle[_lp]) == "table" and type(Bundle[_lp].Preset) == "table" and System._applyBundleAnimPack then
@@ -31166,7 +31217,7 @@ function RoClothes(Player)
 				end
 			end
 			if Data ~= "_rc_bundle_preview" then System._realBuilds = math.max(0, (System._realBuilds or 1) - 1); System._realBuildEnd = os.clock() end
-			-- OFFLINE: look logging disabled (was: _RCA.logLook exec telemetry)
+			-- offline: look logging disabled (was: _rca.loglook exec telemetry)
 			if not completion.ok and not _willRetry then pcall(Function._ceReportFailure, Character, Data, RequestID, DataDetail) end
 			if not _ceOk then
 				warn("[RoClothes] CharacterExecute error:", _ceErr)
@@ -56119,7 +56170,7 @@ table.insert(AllConnect, RS.RenderStepped:Connect(function(dt)
 	end
 
 
-	-- OFFLINE: session-active guard removed
+	-- offline: session-active guard removed
 
 	Function.RunInitialization()
 
@@ -56131,11 +56182,11 @@ end
 
 
 -- ============================================================
--- OFFLINE PATCH (dead-backend shutdown bypass)
--- Disables: access/session auth, consent/refusal UI, roster/chat/
--- look telemetry, diagnostics upload, remote kill (onRefuse).
--- Gameplay dead-checks (parts, characters, streaming, cooldowns)
--- are intentionally LEFT INTACT so the outfit logic still works.
+-- offline patch (dead-backend shutdown bypass)
+-- disables: access/session auth, consent/refusal ui, roster/chat/
+-- look telemetry, diagnostics upload, remote kill (onrefuse).
+-- gameplay dead-checks (parts, characters, streaming, cooldowns)
+-- are intentionally left intact so the outfit logic still works.
 -- ============================================================
 pcall(function()
 	if _RCA then
@@ -56197,13 +56248,13 @@ end)
 -- ============================================================
 
 if RS:IsStudio() then
-	RoClothes(PS.LocalPlayer) -- OFFLINE: boot check removed
+	RoClothes(PS.LocalPlayer) -- offline: boot check removed
 else
 	if RS:IsClient() then
 		if not PS.LocalPlayer then
 			PS.PlayerAdded:Wait()
 		end
-		RoClothes(PS.LocalPlayer) -- OFFLINE: boot check removed
+		RoClothes(PS.LocalPlayer) -- offline: boot check removed
 	elseif RS:IsServer() then
 
 
