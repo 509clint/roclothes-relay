@@ -256,6 +256,39 @@ async function handleClonePos(req, res) {
   return json(res, 200, { ok: true });
 }
 
+// ---------- Public live board (dripsync.edgeone.dev is a static page that reads this) ----------
+// POST /board/presence {userId, name, fit} — lightweight opt-in heartbeat, separate from avatar sync
+// GET  /board/presence -> { ok, count, users: [{name, fit, seen}] } (no userIds ever leave)
+const board = new Map(); // userId -> { name, fit, lastSeen }
+const BOARD_MAX = 500, BOARD_TTL_MS = 10 * 60 * 1000;
+setInterval(() => {
+  const now = nowMs();
+  for (const [uid, r] of board) if (now - r.lastSeen > BOARD_TTL_MS) board.delete(uid);
+}, 30000);
+async function handleBoardPost(req, res) {
+  let raw;
+  try { raw = await readBody(req); } catch (e) { return json(res, 413, { ok: false, error: "too_large" }); }
+  const m = safeParse(raw);
+  if (!m || !validUserId(m.userId)) return json(res, 400, { ok: false, error: "bad_params" });
+  if (board.size >= BOARD_MAX && !board.has(Number(m.userId))) return json(res, 429, { ok: false, error: "board_full" });
+  board.set(Number(m.userId), {
+    name: typeof m.name === "string" ? m.name.slice(0, 28) : "?",
+    fit: typeof m.fit === "string" ? m.fit.slice(0, 120) : "",
+    lastSeen: nowMs(),
+  });
+  return json(res, 200, { ok: true });
+}
+function handleBoardGet(res) {
+  const now = nowMs();
+  const users = [];
+  for (const r of board.values()) {
+    if (now - r.lastSeen > BOARD_TTL_MS) continue;
+    users.push({ name: r.name, fit: r.fit, seen: Math.max(0, Math.round((now - r.lastSeen) / 1000)) });
+  }
+  users.sort((a, b) => a.seen - b.seen);
+  return json(res, 200, { ok: true, count: users.length, users: users.slice(0, BOARD_MAX) });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", "http://x");
@@ -267,6 +300,8 @@ const server = http.createServer(async (req, res) => {
       });
       return res.end();
     }
+    if (req.method === "POST" && url.pathname === "/board/presence") return await handleBoardPost(req, res);
+    if (req.method === "GET" && url.pathname === "/board/presence") return handleBoardGet(res);
     if (req.method === "POST" && url.pathname === "/avatar/publish") return await handlePublish(req, res);
     if (req.method === "GET" && url.pathname === "/avatar/server") return handlePoll(url, res);
     if (req.method === "POST" && url.pathname === "/avatar/clonepos") return await handleClonePos(req, res);
