@@ -271,19 +271,103 @@ async function handleBoardPost(req, res) {
   const m = safeParse(raw);
   if (!m || !validUserId(m.userId)) return json(res, 400, { ok: false, error: "bad_params" });
   if (board.size >= BOARD_MAX && !board.has(Number(m.userId))) return json(res, 429, { ok: false, error: "board_full" });
+  let parts = null;
+  if (m.parts !== undefined && m.parts !== null) {
+    if (!Array.isArray(m.parts) || m.parts.length > 64) return json(res, 400, { ok: false, error: "bad_parts" });
+    parts = [];
+    for (const p of m.parts) {
+      if (!p || typeof p !== "object") return json(res, 400, { ok: false, error: "bad_parts" });
+      const e = {};
+      if (p.m !== undefined) {
+        if (typeof p.m !== "string" || p.m.length > 300 || !/^https:\/\//.test(p.m)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.m = p.m;
+      }
+      if (p.t !== undefined) {
+        if (typeof p.t !== "string" || p.t.length > 300 || !/^https:\/\//.test(p.t)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.t = p.t;
+      }
+      if (p.cf !== undefined) {
+        if (!Array.isArray(p.cf) || p.cf.length !== 12 || !p.cf.every(Number.isFinite)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.cf = p.cf;
+      }
+      if (p.s !== undefined) {
+        if (!Array.isArray(p.s) || p.s.length !== 3 || !p.s.every(Number.isFinite)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.s = p.s;
+      }
+      if (p.c !== undefined) {
+        if (!Array.isArray(p.c) || p.c.length !== 3 || p.c.some((v) => typeof v !== "number" || v < 0 || v > 255)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.c = p.c;
+      }
+      if (p.tr !== undefined) {
+        if (typeof p.tr !== "number" || !Number.isFinite(p.tr)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.tr = p.tr;
+      }
+      if (p.p !== undefined) {
+        if (typeof p.p !== "string" || p.p.length > 40) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.p = p.p;
+      }
+      if (p.n !== undefined) {
+        if (typeof p.n !== "string" || p.n.length > 64) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.n = p.n;
+      }
+      if (p.k !== undefined) {
+        if (p.k !== "mesh" && p.k !== "box" && p.k !== "block" && p.k !== "ball" && p.k !== "cyl") return json(res, 400, { ok: false, error: "bad_parts" });
+        e.k = p.k;
+      }
+      parts.push(e);
+    }
+  }
   board.set(Number(m.userId), {
     name: typeof m.name === "string" ? m.name.slice(0, 28) : "?",
     fit: typeof m.fit === "string" ? m.fit.slice(0, 120) : "",
+    parts: parts,
     lastSeen: nowMs(),
   });
   return json(res, 200, { ok: true });
 }
-function handleBoardGet(res) {
+// ---------- Asset proxy (assetdelivery.roblox.com has no browser CORS; the static
+// board page loads catalog meshes/textures through here instead) ----------
+// GET /asset?id=123 -> bytes with CORS. Small LRU-ish cache, 8MB cap per asset.
+const assetCache = new Map(); // id -> { data: Buffer, type, at }
+const ASSET_MAX = 8 * 1024 * 1024, ASSET_CACHE_N = 200, ASSET_TTL_MS = 6 * 3600 * 1000;
+function serveAsset(res, hit) {
+  res.writeHead(200, {
+    "Content-Type": hit.type || "application/octet-stream",
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "public, max-age=86400",
+    "Content-Length": hit.data.length,
+  });
+  return res.end(hit.data);
+}
+async function handleAsset(url, res) {
+  const id = url.searchParams.get("id");
+  if (!id || !/^\d{1,20}$/.test(id)) return json(res, 400, { ok: false, error: "bad_id" });
   const now = nowMs();
+  const hit = assetCache.get(id);
+  if (hit && now - hit.at < ASSET_TTL_MS) return serveAsset(res, hit);
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => { try { ctl.abort(); } catch (e) {} }, 20000);
+    const r = await fetch("https://assetdelivery.roblox.com/v1/asset/?id=" + id, { signal: ctl.signal });
+    clearTimeout(to);
+    if (!r.ok) return json(res, 502, { ok: false, error: "upstream" });
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > ASSET_MAX) return json(res, 502, { ok: false, error: "bad_size" });
+    const type = (r.headers.get("content-type") || "application/octet-stream").split(";")[0].slice(0, 80);
+    while (assetCache.size >= ASSET_CACHE_N) assetCache.delete(assetCache.keys().next().value);
+    const rec = { data: buf, type, at: now };
+    assetCache.set(id, rec);
+    return serveAsset(res, rec);
+  } catch (e) {
+    return json(res, 502, { ok: false, error: "fetch_fail" });
+  }
+}
+
+function handleBoardGet(res) {  const now = nowMs();
   const users = [];
   for (const r of board.values()) {
     if (now - r.lastSeen > BOARD_TTL_MS) continue;
-    users.push({ name: r.name, fit: r.fit, seen: Math.max(0, Math.round((now - r.lastSeen) / 1000)) });
+    users.push({ name: r.name, fit: r.fit, parts: r.parts || null, seen: Math.max(0, Math.round((now - r.lastSeen) / 1000)) });
   }
   users.sort((a, b) => a.seen - b.seen);
   return json(res, 200, { ok: true, count: users.length, users: users.slice(0, BOARD_MAX) });
@@ -300,6 +384,7 @@ const server = http.createServer(async (req, res) => {
       });
       return res.end();
     }
+    if (req.method === "GET" && url.pathname === "/asset") return handleAsset(url, res);
     if (req.method === "POST" && url.pathname === "/board/presence") return await handleBoardPost(req, res);
     if (req.method === "GET" && url.pathname === "/board/presence") return handleBoardGet(res);
     if (req.method === "POST" && url.pathname === "/avatar/publish") return await handlePublish(req, res);
