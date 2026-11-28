@@ -1,409 +1,529 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DripSync Live — who's wearing what</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: "Google Sans", "Product Sans", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
-    background: #0e1015; color: #e8e8ef;
-    min-height: 100vh; padding: 40px 20px 80px; text-align: center;
-  }
-  h1 { font-size: 28px; font-weight: 700; }
-  h1 span { color: #60a5fa; }
-  .sub { color: #8b93a7; margin-top: 8px; font-size: 14px; }
-  .count { margin-top: 18px; font-size: 15px; color: #b9bfce; }
-  .count b { color: #fff; }
-  #grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 10px; max-width: 1000px; margin: 24px auto 0; text-align: left;
-  }
-  .card { background: #171a22; border-radius: 10px; padding: 12px 16px; }
-  .card .vp {
-    width: 100%; height: 190px; border-radius: 8px; background: #0c0e13;
-    object-fit: contain; cursor: pointer; display: block;
-  }
-  .card .name { font-weight: 700; font-size: 16px; margin-top: 10px; }
-  .card .fit { color: #9aa1b5; font-size: 13px; margin-top: 4px; word-break: break-word; }
-  .card .seen { color: #626b7e; font-size: 12px; margin-top: 6px; }
-  .note { color: #626b7e; font-size: 13px; margin-top: 32px; max-width: 620px; margin-left: auto; margin-right: auto; line-height: 1.6; }
-  .err { color: #c66; margin-top: 22px; }
-  #modal {
-    position: fixed; inset: 0; background: rgba(4,5,8,.88); display: none;
-    align-items: center; justify-content: center; z-index: 50; padding: 20px;
-  }
-  #modal.open { display: flex; }
-  #mbox {
-    background: #171a22; border-radius: 14px; padding: 18px;
-    max-width: min(92vw, 640px); width: 100%;
-  }
-  #mcanvas { width: 100%; height: min(62vh, 560px); display: block; border-radius: 10px; background: #0c0e13; touch-action: none; }
-  #mname { font-weight: 700; font-size: 18px; margin-top: 12px; }
-  #mfit { color: #9aa1b5; font-size: 13px; margin-top: 4px; }
-  #mclose {
-    margin-top: 12px; padding: 9px 34px; border: none; border-radius: 9px;
-    background: #60a5fa; color: #0b0e14; font: 700 14px "Google Sans", system-ui, sans-serif; cursor: pointer;
-  }
-</style>
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-} }
-</script>
-</head>
-<body>
-  <h1>RoClothes:<span>DripSync</span> Live</h1>
-  <div class="sub">everyone sharing their fit right now — tap a viewport to enlarge</div>
-  <div class="count"><b id="count">…</b> online</div>
-  <div id="grid"></div>
-  <div id="msg"></div>
-  <div class="note">Opt in from inside the script (you'll get asked once, or flip it in Settings → Privacy → Share my fit with DripSync). Only your display name and current fit are shown — if your display name matches your username it's partially starred out.</div>
-  <div id="modal"><div id="mbox">
-    <canvas id="mcanvas"></canvas>
-    <div id="mname"></div><div id="mfit"></div>
-    <button id="mclose">Close</button>
-  </div></div>
-<script type="module">
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+// RoClothes avatar relay — drop-in replacement for https://krulhub.dev/avatar/*
+// Implements exactly what RoClothes_perchance.lua expects:
+//   POST /avatar/publish  {placeId,jobId,userId,displayName,scriptVersion,updatedAt,bundle,tweaks[,pose][,clone]}
+//   GET  /avatar/server?placeId=..&jobId=..&self=..&protocol=2&clones=1[&since=..]  (entries carry pose)
+//   POST /avatar/clonepos {placeId,jobId,userId,pos}
+//   WS   /avatar/ws?placeId=..&jobId=..  hello/welcome/pub/peer/clone/cpos/bye (peer carries pose)
+//   pose = { "Joint|Part": [12 CFrame numbers] } — validated (<=64 joints, finite), stored + forwarded with the avatar.
+//
+// Run: npm install && node server.js   (needs Node 18+, listens on PORT env or 3000)
+// Deploy anywhere Roblox can reach over plain HTTPS/WSS: Render, Fly.io, Railway,
+// a VPS, or your own PC with port-forwarding / cloudflared tunnel.
+// Then in RoClothes_perchance.lua set: RC_SYNC_BASE = "https://YOUR-HOST"
+//
+// Notes:
+// - In-memory rooms (placeId:jobId). Restart clears them; clients re-publish in seconds.
+// - No auth: anyone who knows placeId+jobId can read/write that room. JobIds are
+//   unguessable per Roblox server instance, which is the same privacy the old backend had.
+// - Caps: 50 users/room, 512KB body, idle users pruned after 60 min (long grace
+//   so a dropped connection never wipes outfits; leavers may linger that long).
+// - WS heartbeat {t:"tick"} every 25s keeps clients' ~70s silence-detector and any
+//   proxy/tunnel idle timeout happy. The script ignores unknown message types.
 
-var API = "https://roclothes-relay.onrender.com/board/presence";
-var grid = document.getElementById("grid");
-var countEl = document.getElementById("count");
-var msg = document.getElementById("msg");
-var modal = document.getElementById("modal");
-var mcanvas = document.getElementById("mcanvas");
-var mname = document.getElementById("mname");
-var mfit = document.getElementById("mfit");
-var usersByName = {};
-var meshCache = {}, texCache = {};
-var thumbRenderer = null, modalRenderer = null, modalControls = null, modalRAF = 0;
+const http = require("http");
+const { WebSocketServer } = require("ws");
 
-function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+const PORT = Number(process.env.PORT || 3000);
+const MAX_USERS_PER_ROOM = 50;
+const MAX_BODY_BYTES = 512 * 1024;
+const IDLE_PRUNE_MS = 60 * 60 * 1000;
+const TOMBSTONE_MS = 60 * 1000;
+
+// roomKey -> { seq, users: Map<userId, Rec>, tombstones: [{userId, at}], ws: Set<ws> }
+// Rec = { userId, displayName, scriptVersion, bundle, tweaks, updatedAt, lastSeen, seq, clones: Map<slot, clone>, clonePos }
+const rooms = new Map();
+
+function validPlaceId(p) { return typeof p === "string" || typeof p === "number" ? /^[0-9]{1,20}$/.test(String(p)) : false; }
+function validJobId(j) { return typeof j === "string" && j.length >= 1 && j.length <= 64 && /^[A-Za-z0-9_.\-]+$/.test(j); }
+function validUserId(u) { const n = Number(u); return Number.isSafeInteger(n) && n > 0 && n <= 1e15; }
+// pose = { "JointName|PartName": [12 finite CFrame components], ... } (joint snapshot)
+function poseOk(p) {
+  if (p === null || p === undefined) return true;
+  if (typeof p !== "object" || Array.isArray(p)) return false;
+  const keys = Object.keys(p);
+  if (keys.length > 64) return false;
+  for (const k of keys) {
+    if (typeof k !== "string" || k.length === 0 || k.length > 80) return false;
+    const a = p[k];
+    if (!Array.isArray(a) || a.length !== 12) return false;
+    for (let i = 0; i < 12; i++) { const n = a[i]; if (typeof n !== "number" || !Number.isFinite(n)) return false; }
+  }
+  return true;
+}
+function roomKeyOf(placeId, jobId) {
+  if (!validPlaceId(placeId) || !validJobId(String(jobId))) return null;
+  const k = String(placeId) + ":" + String(jobId);
+  return k.length <= 100 ? k : null;
+}
+function getRoom(key) {
+  let r = rooms.get(key);
+  if (!r) { r = { seq: 0, users: new Map(), tombstones: [], ws: new Set() }; rooms.set(key, r); }
+  return r;
+}
+function nowMs() { return Date.now(); }
+function json(res, code, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(code, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Content-Length": Buffer.byteLength(body),
   });
+  res.end(body);
 }
-function ago(s) {
-  if (s < 60) return "seen just now";
-  var m = Math.floor(s / 60);
-  return "seen " + m + " min ago";
-}
-
-/* ---- roblox .mesh v4 parser ---- */
-async function fetchMesh(url) {
-  if (meshCache[url] !== undefined) return meshCache[url];
-  var p = (async function () {
-    var r = await fetch(url);
-    if (!r.ok) return null;
-    var ab = await r.arrayBuffer();
-    if (ab.byteLength < 64) return null;
-    var dv = new DataView(ab);
-    var head = "";
-    for (var i = 0; i < 13; i++) head += String.fromCharCode(dv.getUint8(i));
-    if (head.indexOf("version 4.0") !== 0) return null;
-    var nv = dv.getUint32(17, true);
-    if (!nv || nv > 300000) return null;
-    var v0 = 37, stride = 40;
-    var faceOff = v0 + nv * stride + nv * 16;
-    if (faceOff + 4 > ab.byteLength) return null;
-    var nf = dv.getUint32(faceOff, true);
-    if (!nf || nf > 1000000) return null;
-    if (faceOff + 4 + nf * 12 > ab.byteLength) return null;
-    var pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), uv = new Float32Array(nv * 2);
-    for (var v = 0; v < nv; v++) {
-      var o = v0 + v * stride;
-      pos[v*3] = dv.getFloat32(o, true); pos[v*3+1] = dv.getFloat32(o+4, true); pos[v*3+2] = dv.getFloat32(o+8, true);
-      nrm[v*3] = dv.getFloat32(o+12, true); nrm[v*3+1] = dv.getFloat32(o+16, true); nrm[v*3+2] = dv.getFloat32(o+20, true);
-      var uu = dv.getFloat32(o+24, true), vv = dv.getFloat32(o+28, true);
-      uv[v*2] = Number.isFinite(uu) ? uu : 0; uv[v*2+1] = Number.isFinite(vv) ? vv : 0;
-    }
-    var idx = new Uint32Array(nf * 3);
-    for (var f = 0; f < nf; f++) {
-      for (var k = 0; k < 3; k++) {
-        var ix = dv.getUint32(faceOff + 4 + f * 12 + k * 4, true);
-        if (ix >= nv) return null;
-        idx[f*3+k] = ix;
-      }
-    }
-    return { pos: pos, nrm: nrm, uv: uv, idx: idx };
-  })();
-  meshCache[url] = p;
-  p.then(function (v) { if (!v) meshCache[url] = null; });
-  return p;
-}
-
-function loadTex(url) {
-  if (texCache[url] !== undefined) return texCache[url];
-  var p = (async function () {
-    var r = await fetch(url);
-    if (!r.ok) return null;
-    var b = await r.blob();
-    var obj = URL.createObjectURL(b);
-    try {
-      var tex = await new THREE.TextureLoader().loadAsync(obj);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      return { tex: tex, w: tex.image.width, h: tex.image.height };
-    } catch (e) { return null; }
-    finally { URL.revokeObjectURL(obj); }
-  })();
-  texCache[url] = p;
-  p.then(function (v) { if (!v) texCache[url] = null; });
-  return p;
-}
-
-function cfMatrix(cf) {
-  var m = new THREE.Matrix4();
-  m.set(cf[3], cf[4], cf[5], cf[0], cf[6], cf[7], cf[8], cf[1], cf[9], cf[10], cf[11], cf[2], 0, 0, 0, 1);
-  return m;
-}
-
-async function buildFigure(parts) {
-  var g = new THREE.Group();
-  var jobs = parts.map(async function (p) {
-    var color = p.c ? new THREE.Color(p.c[0]/255, p.c[1]/255, p.c[2]/255) : new THREE.Color(0xd8d8dc);
-    var op = (p.tr == null) ? 1 : Math.max(0, 1 - p.tr);
-    var mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.6, metalness: 0.0, transparent: op < 1, opacity: op, side: THREE.DoubleSide });
-    var mesh = null;
-    if (p.k === "mesh" && p.m) {
-      var geo = await fetchMesh(p.m);
-      if (!geo) {
-        if (!p.s) return null;
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
-        mesh.scale.set(p.s[0], p.s[1], p.s[2]);
-      } else {
-        var g2 = new THREE.BufferGeometry();
-        g2.setAttribute("position", new THREE.BufferAttribute(geo.pos, 3));
-        g2.setAttribute("normal", new THREE.BufferAttribute(geo.nrm, 3));
-        var uv = geo.uv.slice();
-        if (p.t) {
-          var ti = await loadTex(p.t);
-          if (ti) {
-            var mx = 0;
-            for (var i = 0; i < uv.length; i++) { var a = Math.abs(uv[i]); if (a > mx) mx = a; }
-            if (mx > 4) { for (var j = 0; j < uv.length; j += 2) { uv[j] /= ti.w; uv[j+1] /= ti.h; } }
-            mat.map = ti.tex;
-            mat.needsUpdate = true;
-          }
-        }
-        g2.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-        g2.setIndex(new THREE.BufferAttribute(geo.idx, 1));
-        g2.computeBoundingBox();
-        var bb = g2.boundingBox, bs = new THREE.Vector3();
-        bb.getSize(bs);
-        mesh = new THREE.Mesh(g2, mat);
-        if (p.s) mesh.scale.set(p.s[0] / (bs.x || 1), p.s[1] / (bs.y || 1), p.s[2] / (bs.z || 1));
-      }
-    } else {
-      var bg;
-      if (p.k === "ball") bg = new THREE.SphereGeometry(0.5, 20, 14);
-      else if (p.k === "cyl") { bg = new THREE.CylinderGeometry(0.5, 0.5, 1, 20); bg.rotateZ(Math.PI / 2); }
-      else bg = new THREE.BoxGeometry(1, 1, 1);
-      mesh = new THREE.Mesh(bg, mat);
-      if (p.s) mesh.scale.set(p.s[0], p.s[1], p.s[2]);
-    }
-    if (!mesh) return null;
-    if (p.cf) mesh.applyMatrix4(cfMatrix(p.cf));
-    return mesh;
-  });
-  var meshes = await Promise.all(jobs);
-  meshes.forEach(function (m) { if (m) g.add(m); });
-  return g.children.length ? g : null;
-}
-
-function lightScene(scene) {
-  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x2a3648, 0.9));
-  var d = new THREE.DirectionalLight(0xffffff, 1.4);
-  d.position.set(3, 5, 4);
-  scene.add(d);
-  var d2 = new THREE.DirectionalLight(0x88aaff, 0.5);
-  d2.position.set(-4, 2, -3);
-  scene.add(d2);
-}
-
-function frameCamera(cam, obj, w, h) {
-  var box = new THREE.Box3().setFromObject(obj);
-  var sphere = box.getBoundingSphere(new THREE.Sphere());
-  var fov = cam.fov * Math.PI / 180;
-  var dist = (sphere.radius / Math.sin(fov / 2)) * 1.05;
-  var dir = new THREE.Vector3(0.55, 0.28, 1).normalize();
-  cam.position.copy(sphere.center).addScaledVector(dir, dist);
-  cam.near = Math.max(0.01, dist / 100);
-  cam.far = dist * 20;
-  cam.updateProjectionMatrix();
-  cam.lookAt(sphere.center);
-  return sphere.center;
-}
-
-function getThumbRenderer() {
-  if (!thumbRenderer) {
-    thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-  }
-  return thumbRenderer;
-}
-
-async function renderThumb(parts, w, h) {
-  try {
-    var g = await buildFigure(parts);
-    if (!g) return null;
-    var r = getThumbRenderer();
-    r.setSize(w, h, false);
-    r.setPixelRatio(1);
-    var scene = new THREE.Scene();
-    lightScene(scene);
-    scene.add(g);
-    var cam = new THREE.PerspectiveCamera(32, w / h, 0.01, 1000);
-    frameCamera(cam, g, w, h);
-    r.render(scene, cam);
-    var url = r.domElement.toDataURL("image/png");
-    disposeGroup(g);
-    return url;
-  } catch (e) { return null; }
-}
-
-function disposeGroup(g) {
-  g.traverse(function (o) { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } });
-}
-
-/* ---- cards + modal ---- */
-var modalScene = null, modalCam = null, modalGroup = null, modalUserName = null;
-
-function closeModal() {
-  modal.classList.remove("open");
-  modalUserName = null;
-  if (modalRAF) { cancelAnimationFrame(modalRAF); modalRAF = 0; }
-  if (modalControls) { modalControls.dispose(); modalControls = null; }
-  if (modalRenderer) { modalRenderer.dispose(); modalRenderer = null; }
-  modalScene = null; modalCam = null; modalGroup = null;
-}
-document.getElementById("mclose").addEventListener("click", closeModal);
-modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
-
-async function openModal(u) {
-  if (!u.parts || !u.parts.length) return;
-  modalUserName = u.name || "?";
-  mname.textContent = modalUserName;
-  mfit.textContent = u.fit || "Default avatar";
-  modal.classList.add("open");
-  var W = mcanvas.clientWidth || 560, H = mcanvas.clientHeight || 480;
-  if (modalRenderer) { modalRenderer.dispose(); modalRenderer = null; }
-  if (modalControls) { modalControls.dispose(); modalControls = null; }
-  modalScene = null; modalCam = null; modalGroup = null;
-  try {
-    var g = await buildFigure(u.parts);
-    if (!g) return;
-    if (!modal.classList.contains("open")) { disposeGroup(g); return; }
-    var r = new THREE.WebGLRenderer({ canvas: mcanvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
-    r.setSize(W, H, false);
-    r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    modalRenderer = r;
-    var scene = new THREE.Scene();
-    lightScene(scene);
-    scene.add(g);
-    modalScene = scene; modalGroup = g;
-    var cam = new THREE.PerspectiveCamera(32, W / H, 0.01, 1000);
-    modalCam = cam;
-    var center = frameCamera(cam, g, W, H);
-    var ctl = new OrbitControls(cam, mcanvas);
-    ctl.target.copy(center);
-    ctl.enableDamping = true;
-    ctl.autoRotate = true;
-    ctl.autoRotateSpeed = 1.2;
-    mcanvas.addEventListener("pointerdown", function off() {
-      ctl.autoRotate = false;
-      mcanvas.removeEventListener("pointerdown", off);
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let total = 0;
+    const chunks = [];
+    req.on("data", (c) => {
+      total += c.length;
+      if (total > MAX_BODY_BYTES) { reject(new Error("too_large")); req.destroy(); return; }
+      chunks.push(c);
     });
-    modalControls = ctl;
-    (function loop() {
-      if (!modal.classList.contains("open")) return;
-      modalRAF = requestAnimationFrame(loop);
-      ctl.update();
-      r.render(scene, cam);
-    })();
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+function safeParse(s) {
+  if (typeof s !== "string" || s.length === 0 || s.length > MAX_BODY_BYTES) return null;
+  try { const v = JSON.parse(s); return (v && typeof v === "object") ? v : null; }
+  catch (e) { return null; }
+}
+function pruneRoom(key, room) {
+  const now = nowMs();
+  let changed = false;
+  for (const [uid, rec] of room.users) {
+    if (now - rec.lastSeen > IDLE_PRUNE_MS) {
+      room.users.delete(uid);
+      room.tombstones.push({ userId: uid, at: now });
+      broadcast(room, JSON.stringify({ t: "leave", userId: uid }), null);
+      console.log(new Date().toISOString(), "prune", key, "u" + uid, "idle" + Math.round((now - rec.lastSeen) / 1000) + "s");
+      changed = true;
+    }
+  }
+  while (room.tombstones.length && now - room.tombstones[0].at > TOMBSTONE_MS) room.tombstones.shift();
+  if (room.users.size === 0 && room.ws.size === 0) rooms.delete(key);
+  return changed;
+}
+setInterval(() => {
+  for (const [key, room] of rooms) pruneRoom(key, room);
+}, 15000);
+
+// Heartbeat: a tiny server->client frame every 25s so clients never hit their
+// ~70s receive-silence timeout during long idle stretches, and so proxies /
+// tunnels with idle limits keep the socket open. The script updates its
+// last-receive clock on any message and ignores unknown types.
+setInterval(() => {
+  let msg = null;
+  for (const room of rooms.values()) {
+    if (room.ws.size === 0) continue;
+    if (!msg) msg = JSON.stringify({ t: "tick", now: Date.now() });
+    broadcast(room, msg, null);
+  }
+}, 25000);
+
+function presentIds(room) {
+  const out = [];
+  for (const uid of room.users.keys()) out.push(uid);
+  return out.slice(0, MAX_USERS_PER_ROOM);
+}
+function entriesFor(room, since) {
+  const out = [];
+  for (const rec of room.users.values()) {
+    if (rec.bundle === undefined || rec.bundle === null) continue;
+    if (since !== null && since !== undefined && Number.isFinite(since)) {
+      if (!(rec.seq > since)) continue;
+    }
+    out.push({
+      userId: rec.userId,
+      displayName: rec.displayName || "",
+      bundle: rec.bundle,
+      tweaks: rec.tweaks === undefined ? null : rec.tweaks,
+      pose: rec.pose === undefined ? null : rec.pose,
+      updatedAt: rec.updatedAt,
+    });
+    if (out.length >= MAX_USERS_PER_ROOM) break;
+  }
+  return out;
+}
+function broadcast(room, msg, except) {
+  for (const ws of room.ws) {
+    if (ws === except) continue;
+    if (ws.readyState !== 1) continue;
+    try { ws.send(msg); } catch (e) {}
+  }
+}
+
+// ---------- HTTP ----------
+async function handlePublish(req, res) {
+  let raw;
+  try { raw = await readBody(req); } catch (e) { return json(res, 413, { ok: false, error: "too_large" }); }
+  const m = safeParse(raw);
+  if (!m) return json(res, 400, { ok: false, error: "bad_json" });
+  const key = roomKeyOf(m.placeId, m.jobId);
+  if (!key || !validUserId(m.userId)) return json(res, 400, { ok: false, error: "bad_params" });
+  if (m.bundle !== null && m.bundle !== undefined && typeof m.bundle !== "object") return json(res, 400, { ok: false, error: "bad_bundle" });
+  if (m.tweaks !== undefined && m.tweaks !== null && typeof m.tweaks !== "object") return json(res, 400, { ok: false, error: "bad_tweaks" });
+  if (!poseOk(m.pose)) return json(res, 400, { ok: false, error: "bad_pose" });
+  const updatedAt = Number(m.updatedAt);
+  if (!Number.isSafeInteger(updatedAt) || updatedAt <= 0) return json(res, 400, { ok: false, error: "bad_updatedAt" });
+
+  const room = getRoom(key);
+  if (!room.users.has(Number(m.userId)) && room.users.size >= MAX_USERS_PER_ROOM) {
+    return json(res, 429, { ok: false, error: "room_full" });
+  }
+  room.seq += 1;
+  const uid = Number(m.userId);
+  let rec = room.users.get(uid);
+  if (!rec) {
+    rec = { userId: uid, clones: new Map() };
+    room.users.set(uid, rec);
+  }
+  rec.displayName = typeof m.displayName === "string" ? m.displayName.slice(0, 40) : (rec.displayName || "");
+  rec.scriptVersion = typeof m.scriptVersion === "string" ? m.scriptVersion.slice(0, 40) : rec.scriptVersion;
+  rec.updatedAt = updatedAt;
+  rec.lastSeen = nowMs();
+  rec.seq = room.seq;
+  if (m.clone && typeof m.clone === "object") {
+    // clone publish shares the same endpoint (slot inside clone object)
+    const slot = Number(m.clone.slot);
+    if (Number.isSafeInteger(slot) && slot >= 1 && slot <= 8) {
+      if (m.clone.remove) rec.clones.delete(slot);
+      else rec.clones.set(slot, { slot, name: String(m.clone.name || "").slice(0, 32), cf: m.clone.cf, pose: m.clone.pose });
+      // keep avatar bundle too if provided
+      if (m.bundle !== undefined) rec.bundle = m.bundle;
+      if (m.pose !== undefined) rec.pose = m.pose;
+      if (m.tweaks !== undefined) rec.tweaks = m.tweaks;
+    }
+    broadcast(room, JSON.stringify({ t: "clone", ownerId: uid, clone: Object.assign({ slot }, m.clone.remove ? { remove: true } : m.clone) }), null);
+  } else {
+    rec.bundle = m.bundle;
+    rec.tweaks = m.tweaks === undefined ? null : m.tweaks;
+    rec.pose = m.pose === undefined ? null : m.pose;
+    broadcast(room, JSON.stringify({ t: "peer", peer: { userId: uid, displayName: rec.displayName, bundle: rec.bundle, tweaks: rec.tweaks, pose: rec.pose, updatedAt } }), null);
+  }
+  console.log(new Date().toISOString(), "pub", key, "u" + uid);
+  return json(res, 200, { ok: true });
+}
+
+function handlePoll(url, res) {
+  const placeId = url.searchParams.get("placeId");
+  const jobId = url.searchParams.get("jobId");
+  const selfId = Number(url.searchParams.get("self"));
+  const sinceRaw = url.searchParams.get("since");
+  const key = roomKeyOf(placeId, jobId);
+  if (!key) return json(res, 400, { ok: false, error: "bad_params" });
+  const room = getRoom(key);
+  const since = sinceRaw === null ? null : Number(sinceRaw);
+  const now = nowMs();
+  // touch self so idle pruning sees pollers as alive
+  if (validUserId(selfId) && room.users.has(selfId)) room.users.get(selfId).lastSeen = now;
+  const present = presentIds(room);
+  const entries = entriesFor(room, Number.isFinite(since) ? since : null).filter((e) => e.userId !== selfId);
+  const removed = room.tombstones.filter((t) => t.userId !== selfId).map((t) => t.userId);
+  const clones = [];
+  const clonePresent = {};
+  const clonePos = {};
+  for (const rec of room.users.values()) {
+    if (rec.userId === selfId) continue;
+    if (rec.clones && rec.clones.size) {
+      clonePresent[String(rec.userId)] = true;
+      for (const [slot, c] of rec.clones) clones.push(Object.assign({ ownerId: rec.userId }, c));
+    }
+    if (rec.clonePos) clonePos[String(rec.userId)] = rec.clonePos;
+  }
+  return json(res, 200, {
+    ok: true, protocol: 2, now, present, entries, removed,
+    cursor: room.seq, clones, clonePresent, clonePos,
+  });
+}
+
+async function handleClonePos(req, res) {
+  let raw;
+  try { raw = await readBody(req); } catch (e) { return json(res, 413, { ok: false, error: "too_large" }); }
+  const m = safeParse(raw);
+  if (!m) return json(res, 400, { ok: false, error: "bad_json" });
+  const key = roomKeyOf(m.placeId, m.jobId);
+  if (!key || !validUserId(m.userId)) return json(res, 400, { ok: false, error: "bad_params" });
+  const room = getRoom(key);
+  const rec = room.users.get(Number(m.userId));
+  if (rec && m.pos && typeof m.pos === "object") {
+    rec.clonePos = m.pos;
+    rec.lastSeen = nowMs();
+    broadcast(room, JSON.stringify({ t: "cpos", ownerId: Number(m.userId), pos: m.pos }), null);
+  }
+  return json(res, 200, { ok: true });
+}
+
+// ---------- Public live board (dripsync.edgeone.dev is a static page that reads this) ----------
+// POST /board/presence {userId, name, fit} — lightweight opt-in heartbeat, separate from avatar sync
+// GET  /board/presence -> { ok, count, users: [{name, fit, seen}] } (no userIds ever leave)
+const board = new Map(); // userId -> { name, fit, lastSeen }
+const BOARD_MAX = 500, BOARD_TTL_MS = 10 * 60 * 1000;
+setInterval(() => {
+  const now = nowMs();
+  for (const [uid, r] of board) if (now - r.lastSeen > BOARD_TTL_MS) board.delete(uid);
+}, 30000);
+async function handleBoardPost(req, res) {
+  let raw;
+  try { raw = await readBody(req); } catch (e) { return json(res, 413, { ok: false, error: "too_large" }); }
+  const m = safeParse(raw);
+  if (!m || !validUserId(m.userId)) return json(res, 400, { ok: false, error: "bad_params" });
+  if (board.size >= BOARD_MAX && !board.has(Number(m.userId))) return json(res, 429, { ok: false, error: "board_full" });
+  let parts = null;
+  if (m.parts !== undefined && m.parts !== null) {
+    if (!Array.isArray(m.parts) || m.parts.length > 64) return json(res, 400, { ok: false, error: "bad_parts" });
+    parts = [];
+    for (const p of m.parts) {
+      if (!p || typeof p !== "object") return json(res, 400, { ok: false, error: "bad_parts" });
+      const e = {};
+      if (p.m !== undefined) {
+        if (typeof p.m !== "string" || p.m.length > 300 || !/^https:\/\//.test(p.m)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.m = p.m;
+      }
+      if (p.t !== undefined) {
+        if (typeof p.t !== "string" || p.t.length > 300 || !/^https:\/\//.test(p.t)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.t = p.t;
+      }
+      if (p.cf !== undefined) {
+        if (!Array.isArray(p.cf) || p.cf.length !== 12 || !p.cf.every(Number.isFinite)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.cf = p.cf;
+      }
+      if (p.s !== undefined) {
+        if (!Array.isArray(p.s) || p.s.length !== 3 || !p.s.every(Number.isFinite)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.s = p.s;
+      }
+      if (p.c !== undefined) {
+        if (!Array.isArray(p.c) || p.c.length !== 3 || p.c.some((v) => typeof v !== "number" || v < 0 || v > 255)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.c = p.c;
+      }
+      if (p.tr !== undefined) {
+        if (typeof p.tr !== "number" || !Number.isFinite(p.tr)) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.tr = p.tr;
+      }
+      if (p.p !== undefined) {
+        if (typeof p.p !== "string" || p.p.length > 40) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.p = p.p;
+      }
+      if (p.n !== undefined) {
+        if (typeof p.n !== "string" || p.n.length > 64) return json(res, 400, { ok: false, error: "bad_parts" });
+        e.n = p.n;
+      }
+      if (p.k !== undefined) {
+        if (p.k !== "mesh" && p.k !== "box" && p.k !== "block" && p.k !== "ball" && p.k !== "cyl") return json(res, 400, { ok: false, error: "bad_parts" });
+        e.k = p.k;
+      }
+      parts.push(e);
+    }
+  }
+  board.set(Number(m.userId), {
+    name: typeof m.name === "string" ? m.name.slice(0, 28) : "?",
+    fit: typeof m.fit === "string" ? m.fit.slice(0, 120) : "",
+    parts: parts,
+    lastSeen: nowMs(),
+  });
+  return json(res, 200, { ok: true });
+}
+// ---------- Asset proxy (assetdelivery.roblox.com has no browser CORS; the static
+// board page loads catalog meshes/textures through here instead) ----------
+// GET /asset?id=123 -> bytes with CORS. Small LRU-ish cache, 8MB cap per asset.
+const assetCache = new Map(); // id -> { data: Buffer, type, at }
+const ASSET_MAX = 8 * 1024 * 1024, ASSET_CACHE_N = 200, ASSET_TTL_MS = 6 * 3600 * 1000;
+function serveAsset(res, hit) {
+  res.writeHead(200, {
+    "Content-Type": hit.type || "application/octet-stream",
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "public, max-age=86400",
+    "Content-Length": hit.data.length,
+  });
+  return res.end(hit.data);
+}
+async function handleAsset(url, res) {
+  const id = url.searchParams.get("id");
+  if (!id || !/^\d{1,20}$/.test(id)) return json(res, 400, { ok: false, error: "bad_id" });
+  const now = nowMs();
+  const hit = assetCache.get(id);
+  if (hit && now - hit.at < ASSET_TTL_MS) return serveAsset(res, hit);
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => { try { ctl.abort(); } catch (e) {} }, 20000);
+    const r = await fetch("https://assetdelivery.roblox.com/v1/asset/?id=" + id, { signal: ctl.signal });
+    clearTimeout(to);
+    if (!r.ok) return json(res, 502, { ok: false, error: "upstream" });
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > ASSET_MAX) return json(res, 502, { ok: false, error: "bad_size" });
+    const type = (r.headers.get("content-type") || "application/octet-stream").split(";")[0].slice(0, 80);
+    while (assetCache.size >= ASSET_CACHE_N) assetCache.delete(assetCache.keys().next().value);
+    const rec = { data: buf, type, at: now };
+    assetCache.set(id, rec);
+    return serveAsset(res, rec);
   } catch (e) {
-    mfit.textContent = "3D failed: " + (e && e.message);
+    return json(res, 502, { ok: false, error: "fetch_fail" });
   }
 }
 
-/* live: while the modal is open and the user hasn't grabbed the camera,
-   swap in the fresh parts each poll without moving the camera */
-function refreshModalFigure(u) {
-  if (!modalScene || !modalCam || !modalControls) return;
-  buildFigure(u.parts).then(function (g) {
-    if (!g || !modal.classList.contains("open") || !modalScene) { if (g) disposeGroup(g); return; }
-    if (modalGroup) { modalScene.remove(modalGroup); disposeGroup(modalGroup); }
-    modalGroup = g;
-    modalScene.add(g);
-    var W = mcanvas.clientWidth || 560, H = mcanvas.clientHeight || 480;
-    modalControls.target.copy(frameCamera(modalCam, g, W, H));
-    mfit.textContent = u.fit || "Default avatar";
-  }).catch(function () {});
+function handleBoardGet(res) {  const now = nowMs();
+  const users = [];
+  for (const r of board.values()) {
+    if (now - r.lastSeen > BOARD_TTL_MS) continue;
+    users.push({ name: r.name, fit: r.fit, parts: r.parts || null, seen: Math.max(0, Math.round((now - r.lastSeen) / 1000)) });
+  }
+  users.sort((a, b) => a.seen - b.seen);
+  return json(res, 200, { ok: true, count: users.length, users: users.slice(0, BOARD_MAX) });
 }
 
-var observer = new IntersectionObserver(function (entries) {
-  entries.forEach(function (en) {
-    if (!en.isIntersecting) return;
-    var img = en.target;
-    observer.unobserve(img);
-    var u = usersByName[img.getAttribute("data-u")];
-    if (!u || !u.parts || !u.parts.length) { img.style.display = "none"; return; }
-    renderThumb(u.parts, 480, 340).then(function (url) {
-      if (url) img.src = url;
-      else img.style.display = "none";
-    });
-  });
-}, { rootMargin: "200px" });
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url || "/", "http://x");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      });
+      return res.end();
+    }
+    if (req.method === "GET" && url.pathname === "/asset") return handleAsset(url, res);
+    if (req.method === "POST" && url.pathname === "/board/presence") return await handleBoardPost(req, res);
+    if (req.method === "GET" && url.pathname === "/board/presence") return handleBoardGet(res);
+    if (req.method === "POST" && url.pathname === "/avatar/publish") return await handlePublish(req, res);
+    if (req.method === "GET" && url.pathname === "/avatar/server") return handlePoll(url, res);
+    if (req.method === "POST" && url.pathname === "/avatar/clonepos") return await handleClonePos(req, res);
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
+      return json(res, 200, { ok: true, rooms: rooms.size, name: "roclothes-relay" });
+    }
+    return json(res, 404, { ok: false, error: "not_found" });
+  } catch (e) {
+    try { return json(res, 500, { ok: false, error: "internal" }); } catch (e) {}
+  }
+});
 
-function load() {
-  fetch(API, { cache: "no-store" }).then(function (r) {
-    if (!r.ok) throw new Error("http " + r.status);
-    return r.json();
-  }).then(function (d) {
-    msg.innerHTML = "";
-    var users = (d && d.users) || [];
-    countEl.textContent = d.count || users.length;
-    usersByName = {};
-    users.forEach(function (u, i) { usersByName["u" + i] = u; });
-    if (!users.length) {
-      grid.innerHTML = "";
-      msg.innerHTML = '<div class="sub" style="margin-top:22px">Nobody\'s sharing right now — be the first.</div>';
+// ---------- WebSocket (same rooms, realtime path) ----------
+const wss = new WebSocketServer({ server, path: "/avatar/ws" });
+wss.on("connection", (ws, req) => {
+  let roomKey = null, room = null, userId = null, displayName = "", welcomed = false;
+  try {
+    const url = new URL(req.url || "/", "http://x");
+    roomKey = roomKeyOf(url.searchParams.get("placeId"), url.searchParams.get("jobId"));
+  } catch (e) { roomKey = null; }
+  if (!roomKey) {
+    try { ws.send(JSON.stringify({ t: "err", code: "bad_place_id", of: "hello" })); } catch (e) {}
+    return ws.close(4001, "hello");
+  }
+  room = getRoom(roomKey);
+  ws.on("message", (data) => {
+    let raw;
+    try { raw = typeof data === "string" ? data : data.toString("utf8"); } catch (e) { return; }
+    if (raw === "ping") { try { ws.send("pong"); } catch (e) {} return; }
+    if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_BODY_BYTES) return;
+    let m;
+    try { m = JSON.parse(raw); } catch (e) { return; }
+    if (!m || typeof m !== "object" || typeof m.t !== "string") return;
+
+    if (m.t === "hello") {
+      if (!validUserId(m.userId)) {
+        try { ws.send(JSON.stringify({ t: "err", code: "bad_user_id", of: "hello" })); } catch (e) {}
+        return ws.close(4001, "hello");
+      }
+      if (!welcomed && room.users.size >= MAX_USERS_PER_ROOM && !room.users.has(Number(m.userId))) {
+        try { ws.send(JSON.stringify({ t: "err", code: "room_full", of: "hello" })); } catch (e) {}
+        return ws.close(4009, "full");
+      }
+      userId = Number(m.userId);
+      displayName = typeof m.displayName === "string" ? m.displayName.slice(0, 40) : "";
+      room.ws.add(ws);
+      // ensure user record exists so polling peers see us even before first pub
+      let rec = room.users.get(userId);
+      if (!rec) { room.seq += 1; rec = { userId, clones: new Map(), seq: room.seq }; room.users.set(userId, rec); }
+      rec.displayName = displayName;
+      rec.scriptVersion = typeof m.scriptVersion === "string" ? m.scriptVersion.slice(0, 40) : rec.scriptVersion;
+      rec.lastSeen = nowMs();
+      welcomed = true;
+      const peers = entriesFor(room, null).filter((e) => e.userId !== userId);
+      const clones = [];
+      const clonePresent = {};
+      const cpos = [];
+      for (const r of room.users.values()) {
+        if (r.userId === userId) continue;
+        if (r.clones && r.clones.size) {
+          clonePresent[String(r.userId)] = true;
+          for (const [, c] of r.clones) clones.push(Object.assign({ ownerId: r.userId }, c));
+        }
+        if (r.clonePos) cpos.push({ ownerId: r.userId, pos: r.clonePos });
+      }
+      try {
+        ws.send(JSON.stringify({
+          t: "welcome", now: nowMs(), present: presentIds(room), peers,
+          clones, clonePresent, cpos, more: false,
+        }));
+      } catch (e) {}
+      console.log(new Date().toISOString(), "join", roomKey, "u" + userId);
       return;
     }
-    grid.innerHTML = users.map(function (u, i) {
-      var has3d = u.parts && u.parts.length;
-      return '<div class="card">' +
-        (has3d ? '<img class="vp" data-u="u' + i + '" alt="avatar viewport">' : '<div class="seen">3d preview appears once your character spawns in game</div>') +
-        '<div class="name">' + esc(u.name || "?") + '</div>' +
-        '<div class="fit">' + esc(u.fit || "Default avatar") + '</div>' +
-        '<div class="seen">' + esc(ago(u.seen || 0)) + '</div></div>';
-    }).join("");
-    grid.querySelectorAll("img.vp").forEach(function (img) {
-      observer.observe(img);
-      img.addEventListener("click", function () {
-        var u = usersByName[img.getAttribute("data-u")];
-        if (u) openModal(u);
-      });
-    });
-    if (modal.classList.contains("open") && modalUserName && modalControls && modalControls.autoRotate) {
-      var mu = null;
-      users.forEach(function (u) { if ((u.name || "?") === modalUserName && u.parts && u.parts.length) mu = u; });
-      if (mu) refreshModalFigure(mu);
+    if (!welcomed || userId === null) return;
+    const rec = room.users.get(userId);
+    if (!rec) return;
+    rec.lastSeen = nowMs();
+
+    if (m.t === "pub") {
+      if (m.bundle !== null && m.bundle !== undefined && typeof m.bundle !== "object") return;
+      if (m.tweaks !== undefined && m.tweaks !== null && typeof m.tweaks !== "object") return;
+      if (!poseOk(m.pose)) return;
+      const updatedAt = Number(m.updatedAt);
+      if (!Number.isSafeInteger(updatedAt) || updatedAt <= 0) return;
+      room.seq += 1;
+      rec.seq = room.seq;
+      rec.bundle = m.bundle;
+      rec.tweaks = m.tweaks === undefined ? null : m.tweaks;
+      rec.pose = m.pose === undefined ? null : m.pose;
+      rec.updatedAt = updatedAt;
+      broadcast(room, JSON.stringify({ t: "peer", peer: { userId, displayName, bundle: rec.bundle, tweaks: rec.tweaks, pose: rec.pose, updatedAt } }), ws);
+      console.log(new Date().toISOString(), "pub-ws", roomKey, "u" + userId);
+      return;
     }
-  }).catch(function () {
-    countEl.textContent = "0";
-    grid.innerHTML = "";
-    msg.innerHTML = '<div class="err">Board offline — the relay is unreachable. Try again in a bit.</div>';
+    if (m.t === "clone") {
+      room.seq += 1; rec.seq = room.seq;
+      const slot = Number(m.slot !== undefined ? m.slot : (m.clone && m.clone.slot));
+      const cobj = m.clone && typeof m.clone === "object" ? m.clone : m;
+      if (Number.isSafeInteger(slot) && slot >= 1 && slot <= 8) {
+        rec.clones.set(slot, { slot, name: String(cobj.name || "").slice(0, 32), cf: cobj.cf, pose: cobj.pose });
+      }
+      broadcast(room, JSON.stringify({ t: "clone", ownerId: userId, clone: Object.assign({ slot }, cobj) }), ws);
+      return;
+    }
+    if (m.t === "cloneRemove") {
+      const slot = Number(m.slot);
+      if (Number.isSafeInteger(slot)) rec.clones.delete(slot);
+      broadcast(room, JSON.stringify({ t: "cloneRemove", ownerId: userId, slot }), ws);
+      return;
+    }
+    if (m.t === "cpos") {
+      if (m.pos && typeof m.pos === "object") {
+        rec.clonePos = m.pos;
+        broadcast(room, JSON.stringify({ t: "cpos", ownerId: userId, pos: m.pos }), ws);
+      }
+      return;
+    }
+    if (m.t === "bye" || m.t === "leave") {
+      room.users.delete(userId);
+      room.tombstones.push({ userId, at: nowMs() });
+      room.seq += 1;
+      broadcast(room, JSON.stringify({ t: "leave", userId }), ws);
+      try { ws.close(1000, "bye"); } catch (e) {}
+      return;
+    }
   });
-}
-load();
-setInterval(load, 5000);
-</script>
-</body>
-</html>
+  ws.on("close", () => {
+    try { if (room) room.ws.delete(ws); } catch (e) {}
+    // keep avatar data for HTTP pollers for a bit; only broadcast leave if we had welcomed
+    if (room && welcomed && userId !== null) {
+      // mark lastSeen now; prune job will tombstone + broadcast if they don't come back
+      const rec = room.users.get(userId);
+      if (rec) rec.lastSeen = nowMs();
+    }
+  });
+  ws.on("error", () => {});
+});
+
+server.listen(PORT, () => console.log("roclothes-relay on :" + PORT));
