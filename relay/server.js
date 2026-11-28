@@ -273,45 +273,47 @@ async function handleBoardPost(req, res) {
   if (board.size >= BOARD_MAX && !board.has(Number(m.userId))) return json(res, 429, { ok: false, error: "board_full" });
   let parts = null;
   if (m.parts !== undefined && m.parts !== null) {
-    if (!Array.isArray(m.parts) || m.parts.length > 64) return json(res, 400, { ok: false, error: "bad_parts" });
+    if (!Array.isArray(m.parts) || m.parts.length > 64) return json(res, 400, { ok: false, error: "bad_parts:shape" });
     parts = [];
-    for (const p of m.parts) {
-      if (!p || typeof p !== "object") return json(res, 400, { ok: false, error: "bad_parts" });
+    for (let pi = 0; pi < m.parts.length; pi++) {
+      const p = m.parts[pi];
+      const bad = (why) => json(res, 400, { ok: false, error: "bad_parts:" + pi + ":" + why });
+      if (!p || typeof p !== "object") return bad("shape");
       const e = {};
       if (p.m !== undefined) {
-        if (typeof p.m !== "string" || p.m.length > 300 || !/^https:\/\//.test(p.m)) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (typeof p.m !== "string" || p.m.length > 300 || !/^https:\/\//.test(p.m)) return bad("m");
         e.m = p.m;
       }
       if (p.t !== undefined) {
-        if (typeof p.t !== "string" || p.t.length > 300 || !/^https:\/\//.test(p.t)) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (typeof p.t !== "string" || p.t.length > 300 || !/^https:\/\//.test(p.t)) return bad("t");
         e.t = p.t;
       }
       if (p.cf !== undefined) {
-        if (!Array.isArray(p.cf) || p.cf.length !== 12 || !p.cf.every(Number.isFinite)) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (!Array.isArray(p.cf) || p.cf.length !== 12 || !p.cf.every(Number.isFinite)) return bad("cf");
         e.cf = p.cf;
       }
       if (p.s !== undefined) {
-        if (!Array.isArray(p.s) || p.s.length !== 3 || !p.s.every(Number.isFinite)) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (!Array.isArray(p.s) || p.s.length !== 3 || !p.s.every(Number.isFinite)) return bad("s");
         e.s = p.s;
       }
       if (p.c !== undefined) {
-        if (!Array.isArray(p.c) || p.c.length !== 3 || p.c.some((v) => typeof v !== "number" || v < 0 || v > 255)) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (!Array.isArray(p.c) || p.c.length !== 3 || p.c.some((v) => typeof v !== "number" || v < 0 || v > 255)) return bad("c");
         e.c = p.c;
       }
       if (p.tr !== undefined) {
-        if (typeof p.tr !== "number" || !Number.isFinite(p.tr)) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (typeof p.tr !== "number" || !Number.isFinite(p.tr)) return bad("tr");
         e.tr = p.tr;
       }
       if (p.p !== undefined) {
-        if (typeof p.p !== "string" || p.p.length > 40) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (typeof p.p !== "string" || p.p.length > 40) return bad("p");
         e.p = p.p;
       }
       if (p.n !== undefined) {
-        if (typeof p.n !== "string" || p.n.length > 64) return json(res, 400, { ok: false, error: "bad_parts" });
+        if (typeof p.n !== "string" || p.n.length > 64) return bad("n");
         e.n = p.n;
       }
       if (p.k !== undefined) {
-        if (p.k !== "mesh" && p.k !== "box" && p.k !== "block" && p.k !== "ball" && p.k !== "cyl") return json(res, 400, { ok: false, error: "bad_parts" });
+        if (p.k !== "mesh" && p.k !== "box" && p.k !== "block" && p.k !== "ball" && p.k !== "cyl") return bad("k");
         e.k = p.k;
       }
       parts.push(e);
