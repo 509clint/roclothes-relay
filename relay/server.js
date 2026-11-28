@@ -323,10 +323,21 @@ async function handleBoardPost(req, res) {
       parts.push(e);
     }
   }
+  let sh = null, pa = null;
+  if (m.sh !== undefined && m.sh !== null) {
+    if (typeof m.sh !== "string" || m.sh.length > 300 || !/^https:\/\//.test(m.sh)) return json(res, 400, { ok: false, error: "bad_sh" });
+    sh = m.sh;
+  }
+  if (m.pa !== undefined && m.pa !== null) {
+    if (typeof m.pa !== "string" || m.pa.length > 300 || !/^https:\/\//.test(m.pa)) return json(res, 400, { ok: false, error: "bad_pa" });
+    pa = m.pa;
+  }
   board.set(Number(m.userId), {
     name: typeof m.name === "string" ? m.name.slice(0, 28) : "?",
     fit: typeof m.fit === "string" ? m.fit.slice(0, 120) : "",
     parts: parts,
+    sh: sh,
+    pa: pa,
     lastSeen: nowMs(),
   });
   return json(res, 200, { ok: true });
@@ -373,7 +384,7 @@ function handleBoardGet(res) {  const now = nowMs();
   const users = [];
   for (const r of board.values()) {
     if (now - r.lastSeen > BOARD_TTL_MS) continue;
-    users.push({ name: r.name, fit: r.fit, parts: r.parts || null, seen: Math.max(0, Math.round((now - r.lastSeen) / 1000)) });
+    users.push({ name: r.name, fit: r.fit, parts: r.parts || null, sh: r.sh || null, pa: r.pa || null, seen: Math.max(0, Math.round((now - r.lastSeen) / 1000)) });
   }
   users.sort((a, b) => a.seen - b.seen);
   return json(res, 200, { ok: true, count: users.length, users: users.slice(0, BOARD_MAX) });
