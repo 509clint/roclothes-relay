@@ -1,7 +1,8 @@
 --[[	
 
-This script is not obfuscated. Sharing it is covered by the Terms: https://krulhub.dev/roclothes/terms
+This script is not obfuscated.
 Credit to
+- Clint (@joifejigejnznt on X)
 - Krul
 - Lerp
 - Unknowing
@@ -83,18 +84,8 @@ pcall(function() MS = game:GetService("MaterialService") end)
 local _RC_VER      = "V4.5.117.1115-blue"
 local _RC_VER_DATE = "2026-11-14"
 
--- ============================================================
--- YOUR HOSTS (baked in for your copies).
---   Content files live on your Cloudflare Pages (stable, always on).
---   Avatar sync goes to RC_SYNC_BASE. Priority, highest first:
---     1) getgenv().RC_SYNC_BASE set before running (friends paste the
---        current tunnel URL there each session, no file edit needed),
---     2) RC_SYNC_BASE_DEFAULT below (put a stable relay here one day),
---     3) old backend (dead, sync stays off).
--- ============================================================
-local RC_CONTENT_BASE = "https://roclothes-content.pages.dev" -- no trailing slash
-local RC_SYNC_BASE_DEFAULT = "https://roclothes-relay.onrender.com" -- permanent relay; getgenv override wins if set
-local _rcG = (getgenv and getgenv()) or {}
+local RC_CONTENT_BASE = "https://roclothes-content.pages.dev" 
+local RC_SYNC_BASE_DEFAULT = "https://roclothes-relay.onrender.com" 
 local _rcGovr = (type(_rcG.RC_SYNC_BASE) == "string" and _rcG.RC_SYNC_BASE:gsub("%s+", "")) or ""
 local RC_SYNC_BASE = (_rcGovr ~= "" and _rcGovr) or (RC_SYNC_BASE_DEFAULT ~= "" and RC_SYNC_BASE_DEFAULT) or ""
 RC_SYNC_BASE = RC_SYNC_BASE:gsub("/+$", "")
