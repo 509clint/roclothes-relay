@@ -12167,10 +12167,6 @@ _KR.introAlt = function(style, dim, canvas, firstRun, myName, animate)
 		V._enterL = L({ Size = UDim2.fromScale(1, 1), Text = "Enter", Font = FONTB, TextSize = 14, TextColor3 = Color3.fromRGB(255, 255, 255), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 7, Parent = enter })
 		V.hit.AnchorPoint = Vector2.new(0.5, 0.5); V.hit.Position = UDim2.fromScale(0.5, 0.5); V.hit.Size = UDim2.new(1, 16, 1, 16); V.hit.ZIndex = 8; V.hit.Parent = enter
 
-		local info = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(640, 586), Size = UDim2.fromOffset(470, 30), BackgroundColor3 = Color3.fromRGB(16, 26, 46), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 4, Parent = canvas }); new("UICorner", { CornerRadius = UDim.new(0, 4), Parent = info })
-		fadeIn(info, "BackgroundTransparency", 0.86, 0.6)
-		fadeIn(new("Frame", { Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 5, Parent = info }), "BackgroundTransparency", 0, 0.6)
-		fadeIn(L({ Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -20, 1, 0), Text = _KR.HL.WARN_SHORT, TextSize = 12, TextColor3 = Color3.fromRGB(255, 255, 255), TextXAlignment = Enum.TextXAlignment.Left, Parent = info }), "TextTransparency", 0, 0.6)
 		for i, k in ipairs({ "Version", "Executor", "Bundles", "Items" }) do
 			local c = new("Frame", { Position = UDim2.fromOffset(392 + (i - 1) * 126, 632), Size = UDim2.fromOffset(118, 50), BackgroundColor3 = T.accent, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 4, Parent = canvas }); new("UICorner", { CornerRadius = UDim.new(0, 6), Parent = c })
 			fadeIn(c, "BackgroundTransparency", 0.68, 0.4 + i * 0.05)
@@ -26113,6 +26109,7 @@ function RoClothes(Player)
 
 
 	function Function._warnUnattached(item, miss, total, pd)
+		do return end
 		Function._unattachedWarned = Function._unattachedWarned or {}
 		local key = tostring(item) .. "|" .. tostring(pd.BreastsType) .. "|" .. tostring(pd.TorsoType) .. "|" .. tostring(pd.ButtType) .. "|" .. tostring(pd.LegsType) .. "|" .. tostring(pd.ArmType)
 		if Function._unattachedWarned[key] then return end
