@@ -1,5 +1,5 @@
 # roclothes-relay
-the server for a roclothes fork. - DripSync
+the server for a roclothes fork. - RealDripSync
 
 script:
 ```lua
