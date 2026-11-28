@@ -2,6 +2,7 @@
 
 this script is not obfuscated. sharing it is covered by the non-existing terms: https://krulhub.dev/roclothes/terms
 credit to
+- dripsync (@RealDripSync)
 - krul
 - lerp
 - unknowing
