@@ -316,6 +316,10 @@ async function handleBoardPost(req, res) {
         if (p.k !== "mesh" && p.k !== "box" && p.k !== "block" && p.k !== "ball" && p.k !== "cyl") return bad("k");
         e.k = p.k;
       }
+      if (p.ms !== undefined) {
+        if (!Array.isArray(p.ms) || p.ms.length !== 3 || !p.ms.every(Number.isFinite)) return bad("ms");
+        e.ms = p.ms;
+      }
       parts.push(e);
     }
   }
