@@ -1,5 +1,4 @@
--- GetDripSync: shows the "copy the new script" popup (same look as the server-error popup).
--- Run this in your executor, tap the code box to copy, then paste the loadstring in your executor.
+-- new script thing
 local LOAD = 'loadstring(game:HttpGet("https://github.com/509clint/roclothes-relay/raw/refs/heads/main/DripSync.lua"))()'
 
 local _CG = game:GetService("CoreGui")
